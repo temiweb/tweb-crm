@@ -14,6 +14,7 @@ const SUPABASE_KEY = "sb_publishable_vQ7vHaXXhmLprI6Ph07cDA_wbXkLhB2";
 
 const sb = {
   headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" },
+  const ACCESS_PIN = "1234"; // Change this to your real PIN
   async query(table, params = "") {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: this.headers });
     if (!r.ok) throw new Error(`GET ${table}: ${r.status}`);
@@ -182,8 +183,39 @@ const Badge = ({ status }) => { const s = getStatus(status); return <span style=
 // ═══════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════
+function PinScreen({ onUnlock }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState(false);
+  const handleSubmit = () => {
+    if (pin === ACCESS_PIN) { 
+      sessionStorage.setItem("tweb-auth", "1"); 
+      onUnlock(); 
+    } else { 
+      setError(true); 
+      setPin(""); 
+    }
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F5F0EB", fontFamily: "'Nunito Sans',sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+      <div style={{ background: "#fff", borderRadius: "16px", padding: "32px", width: "320px", textAlign: "center", boxShadow: "0 4px 12px rgba(26,26,46,0.08)" }}>
+        <div style={{ width: "48px", height: "48px", background: "#0F7B5F", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff", fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: "22px" }}>T</div>
+        <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: "20px", marginBottom: "4px" }}>Tweb CRM</div>
+        <div style={{ color: "#8C8C9E", fontSize: "13px", marginBottom: "20px" }}>Enter PIN to continue</div>
+        <input type="password" inputMode="numeric" maxLength={6} value={pin} onChange={e => { setPin(e.target.value); setError(false); }}
+          onKeyDown={e => e.key === "Enter" && handleSubmit()}
+          placeholder="••••"
+          style={{ width: "100%", padding: "12px", border: `2px solid ${error ? "#C62828" : "#E8E4DF"}`, borderRadius: "10px", fontSize: "20px", textAlign: "center", letterSpacing: "8px", outline: "none", fontFamily: "'Outfit',sans-serif", boxSizing: "border-box", marginBottom: "12px" }} />
+        {error && <div style={{ color: "#C62828", fontSize: "12px", marginBottom: "8px", fontWeight: 600 }}>Wrong PIN</div>}
+        <button onClick={handleSubmit}
+          style={{ width: "100%", padding: "12px", background: "#0F7B5F", color: "#fff", border: "none", borderRadius: "10px", fontSize: "14px", fontWeight: 700, cursor: "pointer", fontFamily: "'Nunito Sans',sans-serif" }}>Unlock</button>
+      </div>
+    </div>
+  );
+}
 
 export default function TwebCRM() {
+  const [authed, setAuthed] = useState(sessionStorage.getItem("tweb-auth") === "1");
   const [orders, setOrders] = useState([]);
   const [agents, setAgents] = useState([]);
   const [products, setProducts] = useState([]);
@@ -395,6 +427,9 @@ export default function TwebCRM() {
   const toggleAll = () => { const all = filtered.map(o => o.id); setSel(all.every(id => sel.has(id)) ? new Set() : new Set(all)); };
 
   // ─── LOADING STATE ───
+  
+  if (!authed) return <PinScreen onUnlock={() => setAuthed(true)} />;
+  
   if (!loaded) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: T.bg, fontFamily: T.f }}>
       <div style={{ textAlign: "center" }}>
