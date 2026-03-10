@@ -189,7 +189,7 @@ function PinScreen({ onUnlock }) {
   const [error, setError] = useState(false);
   const handleSubmit = () => {
     if (pin === ACCESS_PIN) { 
-      sessionStorage.setItem("tweb-auth", "1"); 
+      sessionStorage.setItem("tweb-auth-ts", Date.now().toString()); 
       onUnlock(); 
     } else { 
       setError(true); 
@@ -220,7 +220,12 @@ function PinScreen({ onUnlock }) {
 // ═══════════════════════════════════════════════
 
 export default function TwebCRM() {
-  const [authed, setAuthed] = useState(sessionStorage.getItem("tweb-auth") === "1");
+  const [authed, setAuthed] = useState(() => {
+  const ts = sessionStorage.getItem("tweb-auth-ts");
+  if (!ts) return false;
+  const hoursElapsed = (Date.now() - parseInt(ts)) / (1000 * 60 * 60);
+  if (hoursElapsed > 8) { sessionStorage.removeItem("tweb-auth-ts"); return false; }
+  return true;});
   const [orders, setOrders] = useState([]);
   const [agents, setAgents] = useState([]);
   const [products, setProducts] = useState([]);
@@ -482,6 +487,7 @@ export default function TwebCRM() {
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           {saving && <span style={{ color: T.whatsapp, fontSize: "11px", fontWeight: 700 }}>Saving...</span>}
           <Btn v="ghost" sz="xs" onClick={loadAll} style={{ color: "rgba(255,255,255,0.6)" }}>🔄</Btn>
+          <Btn v="ghost" sz="xs" onClick={() => { sessionStorage.removeItem("tweb-auth-ts"); setAuthed(false); }} style={{ color: "rgba(255,255,255,0.4)" }}>🚪</Btn>
           {[{ v: "nigeria", f: "🇳🇬", l: "NG", fl: "Nigeria" }, { v: "ghana", f: "🇬🇭", l: "GH", fl: "Ghana" }].map(c => (
             <button key={c.v} onClick={() => { setCountry(c.v); setStatusF("all"); setStateF("all"); setAgentF("all"); setDupeF(false); setSel(new Set()); }}
               style={{ padding: "6px 12px", borderRadius: "8px", border: country === c.v ? `2px solid ${T.accent}` : "2px solid transparent", background: country === c.v ? T.sidebarActive : "rgba(255,255,255,0.06)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 700, fontFamily: T.f, display: "flex", alignItems: "center", gap: "4px" }}>
