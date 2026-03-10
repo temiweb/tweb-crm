@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 
 const SUPABASE_URL = "https://amdcmtfuytnplrzxabip.supabase.co";
 const SUPABASE_KEY = "sb_publishable_vQ7vHaXXhmLprI6Ph07cDA_wbXkLhB2";
+const ACCESS_PIN = "4285"; // Change this to your real PIN
 
 // ═══════════════════════════════════════════════
 // SUPABASE CLIENT (lightweight, no SDK needed)
@@ -14,7 +15,6 @@ const SUPABASE_KEY = "sb_publishable_vQ7vHaXXhmLprI6Ph07cDA_wbXkLhB2";
 
 const sb = {
   headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" },
-  const ACCESS_PIN = "1234"; // Change this to your real PIN
   async query(table, params = "") {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: this.headers });
     if (!r.ok) throw new Error(`GET ${table}: ${r.status}`);
@@ -181,8 +181,9 @@ const Btn = ({ children, v, sz, ...p }) => {
 const Badge = ({ status }) => { const s = getStatus(status); return <span style={{ background: s.bg, color: s.color, padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, whiteSpace: "nowrap" }}>{s.icon} {s.label}</span>; };
 
 // ═══════════════════════════════════════════════
-// MAIN APP
+// PIN SCREEN
 // ═══════════════════════════════════════════════
+
 function PinScreen({ onUnlock }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
@@ -214,6 +215,10 @@ function PinScreen({ onUnlock }) {
   );
 }
 
+// ═══════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════
+
 export default function TwebCRM() {
   const [authed, setAuthed] = useState(sessionStorage.getItem("tweb-auth") === "1");
   const [orders, setOrders] = useState([]);
@@ -232,6 +237,8 @@ export default function TwebCRM() {
   const [stateF, setStateF] = useState("all");
   const [agentF, setAgentF] = useState("all");
   const [dupeF, setDupeF] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [sel, setSel] = useState(new Set());
   const [showFilters, setShowFilters] = useState(false);
 
@@ -286,9 +293,11 @@ export default function TwebCRM() {
     if (agentF === "unassigned" && o.agent_id) return false;
     if (agentF !== "all" && agentF !== "unassigned" && o.agent_id !== agentF) return false;
     if (dupeF && !dupeMap[o.id]) return false;
+    if (dateFrom) { const d = new Date(o.created_at); if (d < new Date(dateFrom)) return false; }
+    if (dateTo) { const d = new Date(o.created_at); if (d > new Date(dateTo + "T23:59:59")) return false; }
     if (search) { const s = search.toLowerCase(); return [o.name, cleanPhone(o.phone), o.address, o.state, o.product, o.notes].some(f => (f || "").toLowerCase().includes(s)); }
     return true;
-  }), [cOrders, statusF, stateF, agentF, dupeF, search, dupeMap]);
+  }), [cOrders, statusF, stateF, agentF, dupeF, dateFrom, dateTo, search, dupeMap]);
 
   const states = useMemo(() => [...new Set(cOrders.map(o => o.state).filter(Boolean))].sort(), [cOrders]);
 
@@ -318,7 +327,6 @@ export default function TwebCRM() {
     const det = importCountry === "auto" ? (rows.length > 0 ? (Object.keys(rows[0]).some(k => k === "Your Region") ? "ghana" : "nigeria") : country) : importCountry;
     const dbRows = csvToDbRows(rows, det);
     try {
-      // Insert in batches of 50
       for (let i = 0; i < dbRows.length; i += 50) {
         await sb.insert("orders", dbRows.slice(i, i + 50));
       }
@@ -332,7 +340,6 @@ export default function TwebCRM() {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
     try {
       await sb.update("orders", { id }, { status });
-      // Deduct inventory on delivered
       const order = orders.find(o => o.id === id);
       if (status === "delivered" && order?.agent_id) {
         const inv = inventory.find(i => i.agent_id === order.agent_id && i.product_name === order.product);
@@ -426,7 +433,7 @@ export default function TwebCRM() {
   const toggleSel = id => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAll = () => { const all = filtered.map(o => o.id); setSel(all.every(id => sel.has(id)) ? new Set() : new Set(all)); };
 
-  // ─── LOADING STATE ───
+  // ─── SCREENS ───
   
   if (!authed) return <PinScreen onUnlock={() => setAuthed(true)} />;
   
@@ -517,6 +524,8 @@ export default function TwebCRM() {
               <select value={statusF} onChange={e => setStatusF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All Statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
               <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All {country === "ghana" ? "Regions" : "States"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
               <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }} title="From date" />
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }} title="To date" />
             </>}
             <Btn v={dupeF ? "warning" : "secondary"} sz="sm" onClick={() => setDupeF(!dupeF)}>{dupeF ? "✕" : "👥"}</Btn>
             <Btn sz="sm" onClick={() => setShowImport(true)}>📥 Import</Btn>
@@ -527,6 +536,8 @@ export default function TwebCRM() {
             <select value={statusF} onChange={e => setStatusF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }}><option value="all">All Statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
             <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }}><option value="all">All {country === "ghana" ? "Regions" : "States"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
             <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt, gridColumn: "1/-1" }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }} placeholder="From" />
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }} placeholder="To" />
           </div></Card>}
 
           {sel.size > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "10px", alignItems: "center", background: "#E3F2FD", padding: "8px 12px", borderRadius: T.rs, border: "1px solid #90CAF9", flexWrap: "wrap", fontSize: "12px" }}>
