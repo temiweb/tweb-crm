@@ -723,6 +723,12 @@ export default function TwebCRM() {
           <Inp label="Qty Delivered" type="number" value={editOrder.actual_qty_delivered} onChange={e => setEditOrder(p => ({ ...p, actual_qty_delivered: +e.target.value || 0 }))} />
           <Inp label={`Collected (${cur})`} type="number" value={editOrder.actual_price_collected} onChange={e => setEditOrder(p => ({ ...p, actual_price_collected: +e.target.value || 0 }))} />
           <Inp label={`Delivery Fee (${cur})`} type="number" value={editOrder.delivery_fee} onChange={e => setEditOrder(p => ({ ...p, delivery_fee: +e.target.value || 0 }))} />
+          <div style={{ marginBottom: "10px" }}><label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase" }}>Agent</label>
+            <select value={editOrder.agent_id || ""} onChange={e => { const a = agents.find(x => x.id === e.target.value); setEditOrder(p => ({ ...p, agent_id: e.target.value || null, agent_name: a?.name || "" })); }} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt }}>
+              <option value="">Unassigned</option>
+              {cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
           <div style={{ marginBottom: "10px" }}><label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase" }}>Status</label>
             <select value={editOrder.status} onChange={e => setEditOrder(p => ({ ...p, status: e.target.value }))} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt }}>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select></div>
           <div style={{ gridColumn: "1/-1" }}><Inp label="Notes" value={editOrder.notes} onChange={e => setEditOrder(p => ({ ...p, notes: e.target.value }))} /></div>
