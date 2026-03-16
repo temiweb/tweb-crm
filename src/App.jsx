@@ -263,20 +263,24 @@ export default function TwebCRM() {
 
   // ─── LOAD ALL DATA ───
   const loadAll = async () => {
-    try {
-      const [o, a, p, inv, t] = await Promise.all([
-        sb.query("orders", "order=created_at.desc"),
-        sb.query("agents", "order=created_at.asc"),
-        sb.query("products", "order=created_at.asc"),
-        sb.query("inventory"),
-        sb.query("templates"),
-      ]);
-      setOrders(o || []); setAgents(a || []); setProducts(p || []); setInventory(inv || []);
-      const tMap = {};
-      (t || []).forEach(r => { tMap[r.status_key] = r.message; });
-      setTemplates(tMap);
-      setLoaded(true);
-    } catch (e) { setLoadError(e.message); setLoaded(true); }
+  try {
+    const [o, a, p, inv, t] = await Promise.all([
+      sb.query("orders", "order=created_at.desc"),
+      sb.query("agents", "order=created_at.asc"),
+      sb.query("products", "order=created_at.asc"),
+      sb.query("inventory"),
+      sb.query("templates"),
+    ]);
+    setOrders(o || []); setAgents(a || []); setProducts(p || []); setInventory(inv || []);
+    const tMap = {};
+    (t || []).forEach(r => { tMap[r.status_key] = r.message; });
+    setTemplates(tMap);
+    setLoadError(null);
+    setLoaded(true);
+  } catch (e) {
+    if (!loaded) { setLoadError(e.message); setLoaded(true); }
+    // If already loaded, silently ignore refresh errors — data stays as-is
+  }
   };
   useEffect(() => { loadAll(); }, []);
 
