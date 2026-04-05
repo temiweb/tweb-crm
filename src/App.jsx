@@ -311,10 +311,12 @@ export default function TwebCRM() {
   const states = useMemo(() => [...new Set(cOrders.map(o => o.state).filter(Boolean))].sort(), [cOrders]);
 
   const stats = useMemo(() => {
-    const del = cOrders.filter(o => o.status === "delivered");
-    const rev = del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0);
-    const fees = cOrders.reduce((s, o) => s + (o.delivery_fee || 0), 0);
-    return { total: cOrders.length, delivered: del.length, pending: cOrders.filter(o => o.status === "pending").length, failed: cOrders.filter(o => o.status === "failed_delivery").length, rev, fees, net: rev - fees, rate: cOrders.length > 0 ? ((del.length / cOrders.length) * 100).toFixed(1) : "0" };
+  const del = cOrders.filter(o => o.status === "delivered");
+  const rev = del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0);
+  const fees = cOrders.reduce((s, o) => s + (o.delivery_fee || 0), 0);
+  const unitsSold = del.reduce((s, o) => s + (o.actual_qty_delivered || o.qty || 0), 0);
+  const totalUnitsOrdered = cOrders.reduce((s, o) => s + (o.qty || 0), 0);
+  return { total: cOrders.length, delivered: del.length, pending: cOrders.filter(o => o.status === "pending").length, failed: cOrders.filter(o => o.status === "failed_delivery").length, rev, fees, net: rev - fees, rate: cOrders.length > 0 ? ((del.length / cOrders.length) * 100).toFixed(1) : "0", unitsSold, totalUnitsOrdered };
   }, [cOrders]);
 
   const agentSt = useMemo(() => {
@@ -346,16 +348,26 @@ export default function TwebCRM() {
   };
 
   const doUpdateStatus = async (id, status) => {
+    const order = orders.find(o => o.id === id);
+    const wasDelivered = order?.status === "delivered";
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
     try {
       await sb.update("orders", { id }, { status });
-      const order = orders.find(o => o.id === id);
-      if (status === "delivered" && order?.agent_id) {
+      if (order?.agent_id) {
         const inv = inventory.find(i => i.agent_id === order.agent_id && i.product_name === order.product);
         if (inv) {
-          const newQty = Math.max(0, inv.qty - (order.actual_qty_delivered || order.qty));
-          await sb.update("inventory", { id: inv.id }, { qty: newQty });
-          setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQty } : i));
+          const qty = order.actual_qty_delivered || order.qty || 0;
+          if (status === "delivered" && !wasDelivered) {
+            // Deduct stock
+            const newQty = Math.max(0, inv.qty - qty);
+            await sb.update("inventory", { id: inv.id }, { qty: newQty });
+            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQty } : i));
+          } else if (wasDelivered && status !== "delivered") {
+            // Reverse deduction if changing away from delivered
+            const newQty = inv.qty + qty;
+            await sb.update("inventory", { id: inv.id }, { qty: newQty });
+            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQty } : i));
+          }
         }
       }
     } catch (err) { alert("Error: " + err.message); await loadAll(); }
@@ -370,8 +382,35 @@ export default function TwebCRM() {
 
   const doSaveOrder = async (order) => {
     const { id, created_at, updated_at, ...data } = order;
+    const oldOrder = orders.find(o => o.id === id);
+    const wasDelivered = oldOrder?.status === "delivered";
+    const nowDelivered = data.status === "delivered";
     setOrders(prev => prev.map(o => o.id === id ? { ...o, ...data } : o));
-    try { await sb.update("orders", { id }, data); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try {
+      await sb.update("orders", { id }, data);
+      const agentId = data.agent_id || oldOrder?.agent_id;
+      if (agentId) {
+        const inv = inventory.find(i => i.agent_id === agentId && i.product_name === (data.product || oldOrder?.product));
+        if (inv) {
+          const oldQty = oldOrder?.actual_qty_delivered || oldOrder?.qty || 0;
+          const newQtyDelivered = data.actual_qty_delivered || data.qty || 0;
+          if (nowDelivered && !wasDelivered) {
+            const newStock = Math.max(0, inv.qty - newQtyDelivered);
+            await sb.update("inventory", { id: inv.id }, { qty: newStock });
+            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newStock } : i));
+          } else if (wasDelivered && !nowDelivered) {
+            const newStock = inv.qty + oldQty;
+            await sb.update("inventory", { id: inv.id }, { qty: newStock });
+            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newStock } : i));
+          } else if (wasDelivered && nowDelivered && oldQty !== newQtyDelivered) {
+            const diff = oldQty - newQtyDelivered;
+            const newStock = Math.max(0, inv.qty + diff);
+            await sb.update("inventory", { id: inv.id }, { qty: newStock });
+            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newStock } : i));
+          }
+        }
+      }
+    } catch (err) { alert("Error: " + err.message); await loadAll(); }
     setEditOrder(null);
   };
 
@@ -513,9 +552,9 @@ export default function TwebCRM() {
 
       {/* STATS */}
       <div style={{ padding: isMobile ? "12px 12px 8px" : "16px 24px", display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(auto-fit,minmax(120px,1fr))", gap: isMobile ? "8px" : "10px" }}>
-        {[{ l: "Orders", v: stats.total, a: T.sidebar }, { l: "Delivered", v: stats.delivered, s: `${stats.rate}%`, a: "#2E7D32" }, { l: "Pending", v: stats.pending, a: T.warning }, { l: "Failed", v: stats.failed, a: T.danger }, { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, a: "#1976D2" },
+        {[{ l: "Orders", v: stats.total, a: T.sidebar }, { l: "Delivered", v: stats.delivered, s: `${stats.rate}%`, a: "#2E7D32" }, { l: "Units Sold", v: stats.unitsSold, s: `of ${stats.totalUnitsOrdered} ordered`, a: "#6A1B9A" }, { l: "Pending", v: stats.pending, a: T.warning }, { l: "Failed", v: stats.failed, a: T.danger }, { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, a: "#1976D2" },
           ...(!isMobile ? [{ l: "Fees", v: `${cur}${stats.fees.toLocaleString()}`, a: "#E65100" }, { l: "Net", v: `${cur}${stats.net.toLocaleString()}`, a: "#2E7D32" }] : [])
-        ].map((c, i) => (
+         ].map((c, i) => (
           <Card key={i} style={{ padding: isMobile ? "10px 12px" : "14px 16px", borderLeft: `3px solid ${c.a}` }}>
             <div style={{ fontSize: "9px", color: T.textMuted, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>{c.l}</div>
             <div style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: 800, fontFamily: T.fd }}>{c.v}</div>
