@@ -242,6 +242,7 @@ export default function TwebCRM() {
   const [stateF, setStateF] = useState("all");
   const [agentF, setAgentF] = useState("all");
   const [dupeF, setDupeF] = useState(false);
+  const [productF, setProductF] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sel, setSel] = useState(new Set());
@@ -302,13 +303,15 @@ export default function TwebCRM() {
     if (agentF === "unassigned" && o.agent_id) return false;
     if (agentF !== "all" && agentF !== "unassigned" && o.agent_id !== agentF) return false;
     if (dupeF && !dupeMap[o.id]) return false;
+    if (productF !== "all" && o.product !== productF) return false;
     if (dateFrom) { const d = new Date(o.created_at); if (d < new Date(dateFrom)) return false; }
     if (dateTo) { const d = new Date(o.created_at); if (d > new Date(dateTo + "T23:59:59")) return false; }
     if (search) { const s = search.toLowerCase(); return [o.name, cleanPhone(o.phone), o.address, o.state, o.product, o.notes].some(f => (f || "").toLowerCase().includes(s)); }
     return true;
-  }), [cOrders, statusF, stateF, agentF, dupeF, dateFrom, dateTo, search, dupeMap]);
+  }), [cOrders, statusF, stateF, agentF, dupeF, dateFrom, dateTo, search, dupeMap, productF]);
 
   const states = useMemo(() => [...new Set(cOrders.map(o => o.state).filter(Boolean))].sort(), [cOrders]);
+  const productsList = useMemo(() => [...new Set(cOrders.map(o => o.product).filter(Boolean))].sort(), [cOrders]);
 
   const stats = useMemo(() => {
   const del = cOrders.filter(o => o.status === "delivered");
@@ -532,7 +535,7 @@ export default function TwebCRM() {
           <Btn v="ghost" sz="xs" onClick={loadAll} style={{ color: "rgba(255,255,255,0.6)" }}>🔄</Btn>
           <Btn v="ghost" sz="xs" onClick={() => { sessionStorage.removeItem("tweb-auth-ts"); setAuthed(false); }} style={{ color: "rgba(255,255,255,0.4)" }}>🚪</Btn>
           {[{ v: "nigeria", f: "🇳🇬", l: "NG", fl: "Nigeria" }, { v: "ghana", f: "🇬🇭", l: "GH", fl: "Ghana" }].map(c => (
-            <button key={c.v} onClick={() => { setCountry(c.v); setStatusF("all"); setStateF("all"); setAgentF("all"); setDupeF(false); setSel(new Set()); }}
+            <button key={c.v} onClick={() => { setCountry(c.v); setStatusF("all"); setStateF("all"); setAgentF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); }}
               style={{ padding: "6px 12px", borderRadius: "8px", border: country === c.v ? `2px solid ${T.accent}` : "2px solid transparent", background: country === c.v ? T.sidebarActive : "rgba(255,255,255,0.06)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 700, fontFamily: T.f, display: "flex", alignItems: "center", gap: "4px" }}>
               {c.f} {isMobile ? c.l : c.fl} <span style={{ background: "rgba(255,255,255,0.15)", padding: "0 5px", borderRadius: "4px", fontSize: "10px" }}>{orders.filter(o => o.country === c.v).length}</span>
             </button>
@@ -574,7 +577,8 @@ export default function TwebCRM() {
               <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All {country === "ghana" ? "Regions" : "States"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
               <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }} title="From date" />
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }} title="To date" />
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }} title="To date" /> 
+              <select value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All Products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>
             </>}
             <Btn v={dupeF ? "warning" : "secondary"} sz="sm" onClick={() => setDupeF(!dupeF)}>{dupeF ? "✕" : "👥"}</Btn>
             <Btn sz="sm" onClick={() => setShowImport(true)}>📥 Import</Btn>
@@ -587,6 +591,7 @@ export default function TwebCRM() {
             <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt, gridColumn: "1/-1" }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }} placeholder="From" />
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }} placeholder="To" />
+            <select value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt, gridColumn: "1/-1" }}><option value="all">All Products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>
           </div></Card>}
 
           {sel.size > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "10px", alignItems: "center", background: "#E3F2FD", padding: "8px 12px", borderRadius: T.rs, border: "1px solid #90CAF9", flexWrap: "wrap", fontSize: "12px" }}>
