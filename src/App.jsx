@@ -245,6 +245,7 @@ export default function TwebCRM() {
   const [productF, setProductF] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [statsRange, setStatsRange] = useState("all");
   const [sel, setSel] = useState(new Set());
   const [showFilters, setShowFilters] = useState(false);
 
@@ -313,14 +314,25 @@ export default function TwebCRM() {
   const states = useMemo(() => [...new Set(cOrders.map(o => o.state).filter(Boolean))].sort(), [cOrders]);
   const productsList = useMemo(() => [...new Set(cOrders.map(o => o.product).filter(Boolean))].sort(), [cOrders]);
 
+  const statsOrders = useMemo(() => {
+    if (statsRange === "all") return cOrders;
+    const now = new Date();
+    let from;
+    if (statsRange === "today") { from = new Date(now.getFullYear(), now.getMonth(), now.getDate()); }
+    else if (statsRange === "7d") { from = new Date(now - 7 * 24 * 60 * 60 * 1000); }
+    else if (statsRange === "30d") { from = new Date(now - 30 * 24 * 60 * 60 * 1000); }
+    else if (statsRange === "90d") { from = new Date(now - 90 * 24 * 60 * 60 * 1000); }
+    return cOrders.filter(o => new Date(o.created_at) >= from);
+  }, [cOrders, statsRange]);
+  
   const stats = useMemo(() => {
-  const del = cOrders.filter(o => o.status === "delivered");
-  const rev = del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0);
-  const fees = cOrders.reduce((s, o) => s + (o.delivery_fee || 0), 0);
-  const unitsSold = del.reduce((s, o) => s + (o.actual_qty_delivered || o.qty || 0), 0);
-  const totalUnitsOrdered = cOrders.reduce((s, o) => s + (o.qty || 0), 0);
-  return { total: cOrders.length, delivered: del.length, pending: cOrders.filter(o => o.status === "pending").length, failed: cOrders.filter(o => o.status === "failed_delivery").length, rev, fees, net: rev - fees, rate: cOrders.length > 0 ? ((del.length / cOrders.length) * 100).toFixed(1) : "0", unitsSold, totalUnitsOrdered };
-  }, [cOrders]);
+    const del = statsOrders.filter(o => o.status === "delivered");
+    const rev = del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0);
+    const fees = statsOrders.reduce((s, o) => s + (o.delivery_fee || 0), 0);
+    const unitsSold = del.reduce((s, o) => s + (o.actual_qty_delivered || o.qty || 0), 0);
+    const totalUnitsOrdered = statsOrders.reduce((s, o) => s + (o.qty || 0), 0);
+    return { total: statsOrders.length, delivered: del.length, pending: statsOrders.filter(o => o.status === "pending").length, failed: statsOrders.filter(o => o.status === "failed_delivery").length, rev, fees, net: rev - fees, rate: statsOrders.length > 0 ? ((del.length / statsOrders.length) * 100).toFixed(1) : "0", unitsSold, totalUnitsOrdered };
+  }, [statsOrders]);
 
   const agentSt = useMemo(() => {
     const m = {};
@@ -554,16 +566,16 @@ export default function TwebCRM() {
       </div>}
 
       {/* STATS */}
-      <div style={{ padding: isMobile ? "12px 12px 8px" : "16px 24px", display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(auto-fit,minmax(120px,1fr))", gap: isMobile ? "8px" : "10px" }}>
-        {[{ l: "Orders", v: stats.total, a: T.sidebar }, { l: "Delivered", v: stats.delivered, s: `${stats.rate}%`, a: "#2E7D32" }, { l: "Units Sold", v: stats.unitsSold, s: `of ${stats.totalUnitsOrdered} ordered`, a: "#6A1B9A" }, { l: "Pending", v: stats.pending, a: T.warning }, { l: "Failed", v: stats.failed, a: T.danger }, { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, a: "#1976D2" },
-          ...(!isMobile ? [{ l: "Fees", v: `${cur}${stats.fees.toLocaleString()}`, a: "#E65100" }, { l: "Net", v: `${cur}${stats.net.toLocaleString()}`, a: "#2E7D32" }] : [])
-         ].map((c, i) => (
-          <Card key={i} style={{ padding: isMobile ? "10px 12px" : "14px 16px", borderLeft: `3px solid ${c.a}` }}>
-            <div style={{ fontSize: "9px", color: T.textMuted, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>{c.l}</div>
-            <div style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: 800, fontFamily: T.fd }}>{c.v}</div>
-            {c.s && <div style={{ fontSize: "10px", color: T.textMuted }}>{c.s}</div>}
-          </Card>
-        ))}
+      <div style={{ padding: isMobile ? "10px 12px 0" : "14px 24px 0", display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: "11px", color: T.textMuted, fontWeight: 700, marginRight: "4px" }}>Period:</span>
+        {[{ v: "today", l: "Today" }, { v: "7d", l: "7 Days" }, { v: "30d", l: "30 Days" }, { v: "90d", l: "90 Days" }, { v: "all", l: "All Time" }].map(r => (
+      <button key={r.v} onClick={() => setStatsRange(r.v)} style={{
+        padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, fontFamily: T.f, cursor: "pointer",
+        border: statsRange === r.v ? `1.5px solid ${T.accent}` : `1.5px solid ${T.border}`,
+        background: statsRange === r.v ? T.accentLight : T.surface,
+        color: statsRange === r.v ? T.accent : T.textMuted
+      }}>{r.l}</button>
+    ))}
       </div>
 
       <div style={{ padding: isMobile ? "0 12px 16px" : "0 24px 24px" }}>
