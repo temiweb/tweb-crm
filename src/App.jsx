@@ -578,6 +578,18 @@ export default function TwebCRM() {
     ))}
       </div>
 
+      <div style={{ padding: isMobile ? "12px 12px 8px" : "16px 24px", display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(auto-fit,minmax(120px,1fr))", gap: isMobile ? "8px" : "10px" }}>
+        {[{ l: "Orders", v: stats.total, a: T.sidebar }, { l: "Delivered", v: stats.delivered, s: `${stats.rate}%`, a: "#2E7D32" }, { l: "Units Sold", v: stats.unitsSold, s: `of ${stats.totalUnitsOrdered} ordered`, a: "#6A1B9A" }, { l: "Pending", v: stats.pending, a: T.warning }, { l: "Failed", v: stats.failed, a: T.danger }, { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, a: "#1976D2" },
+          ...(!isMobile ? [{ l: "Fees", v: `${cur}${stats.fees.toLocaleString()}`, a: "#E65100" }, { l: "Net", v: `${cur}${stats.net.toLocaleString()}`, a: "#2E7D32" }] : [])
+        ].map((c, i) => (
+          <Card key={i} style={{ padding: isMobile ? "10px 12px" : "14px 16px", borderLeft: `3px solid ${c.a}` }}>
+            <div style={{ fontSize: "9px", color: T.textMuted, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>{c.l}</div>
+            <div style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: 800, fontFamily: T.fd }}>{c.v}</div>
+            {c.s && <div style={{ fontSize: "10px", color: T.textMuted }}>{c.s}</div>}
+          </Card>
+        ))}
+      </div>
+      
       <div style={{ padding: isMobile ? "0 12px 16px" : "0 24px 24px" }}>
 
         {/* ═══ ORDERS ═══ */}
