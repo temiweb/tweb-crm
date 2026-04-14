@@ -245,7 +245,9 @@ export default function TwebCRM() {
   const [productF, setProductF] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [statsRange, setStatsRange] = useState("all");
+  const [statsRange, setStatsRange] = useState("all"); 
+  const [statsFrom, setStatsFrom] = useState(""); 
+  const [statsTo, setStatsTo] = useState("");
   const [sel, setSel] = useState(new Set());
   const [showFilters, setShowFilters] = useState(false);
 
@@ -314,16 +316,33 @@ export default function TwebCRM() {
   const states = useMemo(() => [...new Set(cOrders.map(o => o.state).filter(Boolean))].sort(), [cOrders]);
   const productsList = useMemo(() => [...new Set(cOrders.map(o => o.product).filter(Boolean))].sort(), [cOrders]);
 
-  const statsOrders = useMemo(() => {
-    if (statsRange === "all") return cOrders;
-    const now = new Date();
-    let from;
-    if (statsRange === "today") { from = new Date(now.getFullYear(), now.getMonth(), now.getDate()); }
-    else if (statsRange === "7d") { from = new Date(now - 7 * 24 * 60 * 60 * 1000); }
-    else if (statsRange === "30d") { from = new Date(now - 30 * 24 * 60 * 60 * 1000); }
-    else if (statsRange === "90d") { from = new Date(now - 90 * 24 * 60 * 60 * 1000); }
-    return cOrders.filter(o => new Date(o.created_at) >= from);
-  }, [cOrders, statsRange]);
+ const statsOrders = useMemo(() => {
+   if (statsRange === "all") return cOrders;
+   const now = new Date();
+   let from, to;
+   if (statsRange === "today") {
+     from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+   } else if (statsRange === "week") {
+     const day = now.getDay();
+     const diff = day === 0 ? 6 : day - 1;
+     from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
+   } else if (statsRange === "month") {
+     from = new Date(now.getFullYear(), now.getMonth(), 1);
+   } else if (statsRange === "30d") {
+     from = new Date(now - 30 * 24 * 60 * 60 * 1000);
+   } else if (statsRange === "90d") {
+     from = new Date(now - 90 * 24 * 60 * 60 * 1000);
+   } else if (statsRange === "custom") {
+     if (statsFrom) from = new Date(statsFrom);
+     if (statsTo) to = new Date(statsTo + "T23:59:59");
+   }
+   return cOrders.filter(o => {
+     const d = new Date(o.created_at);
+     if (from && d < from) return false;
+     if (to && d > to) return false;
+     return true;
+   });
+ }, [cOrders, statsRange, statsFrom, statsTo]);
   
   const stats = useMemo(() => {
     const del = statsOrders.filter(o => o.status === "delivered");
@@ -568,7 +587,7 @@ export default function TwebCRM() {
       {/* STATS */}
       <div style={{ padding: isMobile ? "10px 12px 0" : "14px 24px 0", display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: "11px", color: T.textMuted, fontWeight: 700, marginRight: "4px" }}>Period:</span>
-        {[{ v: "today", l: "Today" }, { v: "7d", l: "7 Days" }, { v: "30d", l: "30 Days" }, { v: "90d", l: "90 Days" }, { v: "all", l: "All Time" }].map(r => (
+        {[{ v: "today", l: "Today" }, { v: "week", l: "This Week" }, { v: "month", l: "This Month" }, { v: "30d", l: "30 Days" }, { v: "90d", l: "90 Days" }, { v: "all", l: "All Time" }, { v: "custom", l: "Custom" }].map(r => (
       <button key={r.v} onClick={() => setStatsRange(r.v)} style={{
         padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, fontFamily: T.f, cursor: "pointer",
         border: statsRange === r.v ? `1.5px solid ${T.accent}` : `1.5px solid ${T.border}`,
@@ -576,6 +595,11 @@ export default function TwebCRM() {
         color: statsRange === r.v ? T.accent : T.textMuted
       }}>{r.l}</button>
     ))}
+        {statsRange === "custom" && <>
+          <input type="date" value={statsFrom} onChange={e => setStatsFrom(e.target.value)} style={{ padding: "4px 8px", borderRadius: "6px", fontSize: "11px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
+          <span style={{ fontSize: "11px", color: T.textMuted }}>to</span>
+          <input type="date" value={statsTo} onChange={e => setStatsTo(e.target.value)} style={{ padding: "4px 8px", borderRadius: "6px", fontSize: "11px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
+        </>}
       </div>
 
       <div style={{ padding: isMobile ? "12px 12px 8px" : "16px 24px", display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(auto-fit,minmax(120px,1fr))", gap: isMobile ? "8px" : "10px" }}>
