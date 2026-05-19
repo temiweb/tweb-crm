@@ -144,11 +144,19 @@ function csvToDbRows(rows, forceCountry) {
 // THEME
 // ═══════════════════════════════════════════════
 const T = {
-  bg: "#F5F0EB", surface: "#FFFFFF", surfaceAlt: "#FAF8F5", sidebar: "#1A1A2E", sidebarActive: "#2D2D4A",
-  accent: "#0F7B5F", accentLight: "#E8F5EF", text: "#1A1A2E", textMuted: "#8C8C9E", textLight: "#B0B0BE",
-  border: "#E8E4DF", borderLight: "#F0ECE7", danger: "#C62828", dangerBg: "#FFEBEE", warning: "#E6A817",
-  warningBg: "#FFF8E1", whatsapp: "#25D366", r: "10px", rs: "7px", rl: "14px",
-  sh: "0 1px 3px rgba(26,26,46,0.06)", shm: "0 4px 12px rgba(26,26,46,0.08)", shl: "0 12px 40px rgba(26,26,46,0.12)",
+  bg: "#F4F2EF",
+  surface: "#FFFFFF", surfaceAlt: "#F8F7F5", surfaceHover: "#F1EFEC",
+  sidebar: "#0F172A", sidebarActive: "#1E293B",
+  accent: "#059669", accentLight: "#ECFDF5", accentMid: "#A7F3D0",
+  text: "#0F172A", textMuted: "#64748B", textLight: "#94A3B8",
+  border: "#E2E8F0", borderLight: "#F1F5F9",
+  danger: "#DC2626", dangerBg: "#FEF2F2",
+  warning: "#D97706", warningBg: "#FFFBEB",
+  whatsapp: "#25D366",
+  r: "12px", rs: "8px", rl: "16px",
+  sh: "0 1px 2px rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.04)",
+  shm: "0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04)",
+  shl: "0 20px 50px rgba(0,0,0,0.16), 0 4px 12px rgba(0,0,0,0.08)",
   f: "'Nunito Sans',sans-serif", fd: "'Outfit',sans-serif",
 };
 
@@ -162,14 +170,16 @@ const Modal = ({ open, onClose, title, children, wide }) => {
   if (!open) return null;
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
-      <div style={{ position: "absolute", inset: 0, background: "rgba(26,26,46,0.5)", backdropFilter: "blur(4px)" }} />
-      <div onClick={e => e.stopPropagation()} style={{ position: "relative", background: T.surface, borderRadius: "20px 20px 0 0", padding: "20px", width: "100%", maxWidth: wide ? "700px" : "480px", maxHeight: "90vh", overflow: "auto", boxShadow: T.shl, animation: "sUp .25s ease" }}>
-        <div style={{ width: "40px", height: "4px", background: T.border, borderRadius: "2px", margin: "0 auto 16px" }} />
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-          <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 700, fontFamily: T.fd }}>{title}</h3>
-          <button onClick={onClose} style={{ background: T.surfaceAlt, border: "none", borderRadius: "50%", width: "32px", height: "32px", cursor: "pointer", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "center", color: T.textMuted }}>✕</button>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(15,23,42,0.55)", backdropFilter: "blur(6px)" }} />
+      <div onClick={e => e.stopPropagation()} style={{ position: "relative", background: T.surface, borderRadius: "22px 22px 0 0", width: "100%", maxWidth: wide ? "680px" : "460px", maxHeight: "92vh", overflow: "hidden", boxShadow: T.shl, animation: "sUp .25s ease", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "14px 20px 0", flexShrink: 0 }}>
+          <div style={{ width: "36px", height: "4px", background: T.border, borderRadius: "2px", margin: "0 auto 14px" }} />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "14px", borderBottom: `1px solid ${T.borderLight}` }}>
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, fontFamily: T.fd, color: T.text }}>{title}</h3>
+            <button onClick={onClose} style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: "8px", width: "30px", height: "30px", cursor: "pointer", fontSize: "12px", display: "flex", alignItems: "center", justifyContent: "center", color: T.textMuted, flexShrink: 0 }}>✕</button>
+          </div>
         </div>
-        {children}
+        <div style={{ padding: "16px 20px 24px", overflow: "auto", flex: 1 }}>{children}</div>
       </div>
       <style>{`@keyframes sUp{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
     </div>
@@ -177,28 +187,36 @@ const Modal = ({ open, onClose, title, children, wide }) => {
 };
 
 const Inp = ({ label, ...p }) => (
-  <div style={{ marginBottom: "10px" }}>
-    {label && <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.5px", fontFamily: T.f }}>{label}</label>}
-    <input {...p} style={{ width: "100%", padding: "10px 12px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "14px", fontFamily: T.f, boxSizing: "border-box", outline: "none", background: T.surfaceAlt, color: T.text, ...p.style }}
-      onFocus={e => e.target.style.borderColor = T.accent} onBlur={e => e.target.style.borderColor = T.border} />
+  <div style={{ marginBottom: "12px" }}>
+    {label && <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.6px", fontFamily: T.f }}>{label}</label>}
+    <input {...p} style={{ width: "100%", padding: "10px 13px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "14px", fontFamily: T.f, boxSizing: "border-box", outline: "none", background: T.surface, color: T.text, transition: "border-color .15s, box-shadow .15s", ...p.style }}
+      onFocus={e => { e.target.style.borderColor = T.accent; e.target.style.boxShadow = `0 0 0 3px ${T.accentLight}`; }}
+      onBlur={e => { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }} />
   </div>
 );
 
 const Btn = ({ children, v, sz, ...p }) => {
-  const vs = { primary: { background: T.accent, color: "#fff", border: "none" }, secondary: { background: T.surfaceAlt, color: T.text, border: `1.5px solid ${T.border}` }, danger: { background: T.danger, color: "#fff", border: "none" }, whatsapp: { background: T.whatsapp, color: "#fff", border: "none" }, ghost: { background: "transparent", color: T.textMuted, border: "none" }, warning: { background: T.warning, color: "#fff", border: "none" } };
+  const vs = {
+    primary: { background: T.accent, color: "#fff", border: "none", boxShadow: "0 1px 3px rgba(5,150,105,0.35)" },
+    secondary: { background: T.surface, color: T.text, border: `1.5px solid ${T.border}` },
+    danger: { background: T.danger, color: "#fff", border: "none" },
+    whatsapp: { background: T.whatsapp, color: "#fff", border: "none" },
+    ghost: { background: "transparent", color: T.textMuted, border: "none" },
+    warning: { background: T.warning, color: "#fff", border: "none" },
+  };
   const s = vs[v || "primary"];
-  const zs = sz === "sm" ? { padding: "6px 12px", fontSize: "12px" } : sz === "xs" ? { padding: "4px 8px", fontSize: "11px" } : { padding: "10px 18px", fontSize: "13px" };
-  return <button {...p} style={{ ...s, ...zs, borderRadius: T.rs, cursor: "pointer", fontWeight: 700, fontFamily: T.f, display: "inline-flex", alignItems: "center", gap: "5px", transition: "all .15s", whiteSpace: "nowrap", ...p.style }}>{children}</button>;
+  const zs = sz === "sm" ? { padding: "7px 14px", fontSize: "12px" } : sz === "xs" ? { padding: "4px 10px", fontSize: "11px" } : { padding: "10px 20px", fontSize: "13px" };
+  return <button {...p} style={{ ...s, ...zs, borderRadius: T.rs, cursor: "pointer", fontWeight: 700, fontFamily: T.f, display: "inline-flex", alignItems: "center", gap: "5px", transition: "opacity .15s", whiteSpace: "nowrap", ...p.style }}>{children}</button>;
 };
 
-const Badge = ({ status }) => { const s = getStatus(status); return <span style={{ background: s.bg, color: s.color, padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, whiteSpace: "nowrap" }}>{s.icon} {s.label}</span>; };
+const Badge = ({ status }) => { const s = getStatus(status); return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "4px" }}>{s.icon} {s.label}</span>; };
 
 const Toasts = ({ toasts, onDismiss }) => (
   <div style={{ position: "fixed", bottom: "80px", right: "16px", zIndex: 2000, display: "flex", flexDirection: "column", gap: "8px", maxWidth: "340px", pointerEvents: "none" }}>
     {toasts.map(t => (
-      <div key={t.id} style={{ background: t.type === "error" ? T.danger : T.accent, color: "#fff", padding: "11px 14px", borderRadius: T.r, boxShadow: T.shl, fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "flex-start", gap: "10px", pointerEvents: "all", animation: "sUp .2s ease" }}>
+      <div key={t.id} style={{ background: t.type === "error" ? T.danger : T.accent, color: "#fff", padding: "12px 16px", borderRadius: T.r, boxShadow: T.shl, fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "flex-start", gap: "10px", pointerEvents: "all", animation: "sUp .2s ease" }}>
         <span style={{ flex: 1 }}>{t.type === "error" ? "⚠ " : "✓ "}{t.msg}</span>
-        <button onClick={() => onDismiss(t.id)} style={{ background: "rgba(255,255,255,0.25)", border: "none", color: "#fff", borderRadius: "4px", cursor: "pointer", padding: "2px 7px", fontSize: "12px", flexShrink: 0 }}>✕</button>
+        <button onClick={() => onDismiss(t.id)} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: "6px", cursor: "pointer", padding: "2px 8px", fontSize: "12px", flexShrink: 0 }}>✕</button>
       </div>
     ))}
   </div>
@@ -240,19 +258,20 @@ function PinScreen({ onUnlock }) {
     }
   };
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F5F0EB", fontFamily: "'Nunito Sans',sans-serif" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F4F2EF", fontFamily: "'Nunito Sans',sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-      <div style={{ background: "#fff", borderRadius: "16px", padding: "32px", width: "320px", textAlign: "center", boxShadow: "0 4px 12px rgba(26,26,46,0.08)" }}>
-        <div style={{ width: "48px", height: "48px", background: "#0F7B5F", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff", fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: "22px" }}>T</div>
-        <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: "20px", marginBottom: "4px" }}>Tweb CRM</div>
-        <div style={{ color: "#8C8C9E", fontSize: "13px", marginBottom: "20px" }}>Enter PIN to continue</div>
+      <div style={{ background: "#fff", borderRadius: "20px", padding: "36px 32px", width: "340px", textAlign: "center", boxShadow: "0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)" }}>
+        <div style={{ width: "52px", height: "52px", background: "linear-gradient(135deg,#059669,#047857)", borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px", color: "#fff", fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: "24px", boxShadow: "0 4px 12px rgba(5,150,105,0.35)" }}>T</div>
+        <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: "22px", color: "#0F172A", marginBottom: "6px" }}>Tweb CRM</div>
+        <div style={{ color: "#64748B", fontSize: "13px", marginBottom: "24px" }}>Enter your PIN to continue</div>
         <input type="password" inputMode="numeric" maxLength={6} value={pin} onChange={e => { setPin(e.target.value); setError(false); }}
           onKeyDown={e => e.key === "Enter" && handleSubmit()}
           placeholder="••••"
-          style={{ width: "100%", padding: "12px", border: `2px solid ${error ? "#C62828" : "#E8E4DF"}`, borderRadius: "10px", fontSize: "20px", textAlign: "center", letterSpacing: "8px", outline: "none", fontFamily: "'Outfit',sans-serif", boxSizing: "border-box", marginBottom: "12px" }} />
-        {error && <div style={{ color: "#C62828", fontSize: "12px", marginBottom: "8px", fontWeight: 600 }}>Wrong PIN</div>}
+          style={{ width: "100%", padding: "13px", border: `2px solid ${error ? "#DC2626" : "#E2E8F0"}`, borderRadius: "12px", fontSize: "22px", textAlign: "center", letterSpacing: "10px", outline: "none", fontFamily: "'Outfit',sans-serif", boxSizing: "border-box", marginBottom: "8px", transition: "border-color .15s" }} />
+        {error && <div style={{ color: "#DC2626", fontSize: "12px", marginBottom: "10px", fontWeight: 700 }}>Incorrect PIN — try again</div>}
+        {!error && <div style={{ marginBottom: "10px" }} />}
         <button onClick={handleSubmit}
-          style={{ width: "100%", padding: "12px", background: "#0F7B5F", color: "#fff", border: "none", borderRadius: "10px", fontSize: "14px", fontWeight: 700, cursor: "pointer", fontFamily: "'Nunito Sans',sans-serif" }}>Unlock</button>
+          style={{ width: "100%", padding: "13px", background: "linear-gradient(135deg,#059669,#047857)", color: "#fff", border: "none", borderRadius: "12px", fontSize: "14px", fontWeight: 700, cursor: "pointer", fontFamily: "'Nunito Sans',sans-serif", boxShadow: "0 2px 8px rgba(5,150,105,0.35)" }}>Unlock</button>
       </div>
     </div>
   );
@@ -583,10 +602,10 @@ export default function TwebCRM() {
   if (!loaded) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: T.bg, fontFamily: T.f }}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: "32px", marginBottom: "12px", animation: "pulse 1.5s infinite" }}>📋</div>
-        <div style={{ fontFamily: T.fd, fontWeight: 700, fontSize: "18px" }}>Connecting to database...</div>
-        <div style={{ color: T.textMuted, fontSize: "13px", marginTop: "4px" }}>Loading your CRM data</div>
-        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+        <div style={{ width: "48px", height: "48px", background: `linear-gradient(135deg,${T.accent},#047857)`, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff", fontFamily: T.fd, fontWeight: 800, fontSize: "22px", animation: "pulse 1.5s infinite" }}>T</div>
+        <div style={{ fontFamily: T.fd, fontWeight: 700, fontSize: "18px", color: T.text }}>Loading your data…</div>
+        <div style={{ color: T.textMuted, fontSize: "13px", marginTop: "6px" }}>Connecting to Supabase</div>
+        <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.7;transform:scale(0.96)}}`}</style>
       </div>
     </div>
   );
@@ -617,61 +636,72 @@ export default function TwebCRM() {
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Nunito+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
       {/* HEADER */}
-      <div style={{ background: T.sidebar, padding: isMobile ? "12px 16px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <div style={{ width: "32px", height: "32px", background: T.accent, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontFamily: T.fd, fontWeight: 800, fontSize: "15px" }}>T</div>
-          {!isMobile && <div><div style={{ fontFamily: T.fd, fontWeight: 700, fontSize: "15px", color: "#fff" }}>Tweb CRM</div><div style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)", letterSpacing: "1px", textTransform: "uppercase" }}>Live Database</div></div>}
+      <div style={{ background: T.sidebar, padding: isMobile ? "0 16px" : "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, height: "56px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ width: "34px", height: "34px", background: `linear-gradient(135deg,${T.accent},#047857)`, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontFamily: T.fd, fontWeight: 800, fontSize: "16px", flexShrink: 0 }}>T</div>
+          {!isMobile && <div><div style={{ fontFamily: T.fd, fontWeight: 700, fontSize: "15px", color: "#fff", lineHeight: 1.2 }}>Tweb CRM</div><div style={{ fontSize: "10px", color: "rgba(255,255,255,0.35)", letterSpacing: "1px", textTransform: "uppercase" }}>Live</div></div>}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          {saving && <span style={{ color: T.whatsapp, fontSize: "11px", fontWeight: 700 }}>Saving...</span>}
-          {syncError && <span style={{ color: "#FF8A65", fontSize: "11px", fontWeight: 700 }} title="Auto-sync failed — click refresh">⚠ Offline</span>}
-          <Btn v="ghost" sz="xs" onClick={() => { setSyncError(false); loadAll(); }} style={{ color: "rgba(255,255,255,0.6)" }}>🔄</Btn>
-          <Btn v="ghost" sz="xs" onClick={() => { sessionStorage.removeItem("tweb-auth-ts"); setAuthed(false); }} style={{ color: "rgba(255,255,255,0.4)" }}>🚪</Btn>
-          {[{ v: "nigeria", f: "🇳🇬", l: "NG", fl: "Nigeria" }, { v: "ghana", f: "🇬🇭", l: "GH", fl: "Ghana" }].map(c => (
-            <button key={c.v} onClick={() => { setCountry(c.v); setStatusF("all"); setStateF("all"); setAgentF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); setShowFilters(false); }}
-              style={{ padding: "6px 12px", borderRadius: "8px", border: country === c.v ? `2px solid ${T.accent}` : "2px solid transparent", background: country === c.v ? T.sidebarActive : "rgba(255,255,255,0.06)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 700, fontFamily: T.f, display: "flex", alignItems: "center", gap: "4px" }}>
-              {c.f} {isMobile ? c.l : c.fl} <span style={{ background: "rgba(255,255,255,0.15)", padding: "0 5px", borderRadius: "4px", fontSize: "10px" }}>{orders.filter(o => o.country === c.v).length}</span>
-            </button>
-          ))}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {saving && <span style={{ color: "#34D399", fontSize: "11px", fontWeight: 700, background: "rgba(52,211,153,0.12)", padding: "3px 10px", borderRadius: "6px" }}>Saving…</span>}
+          {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ color: "#FCA5A5", fontSize: "11px", fontWeight: 700, background: "rgba(220,38,38,0.15)", padding: "3px 10px", borderRadius: "6px", cursor: "pointer" }}>⚠ Offline</span>}
+          <button onClick={() => { setSyncError(false); loadAll(); }} title="Refresh" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)", borderRadius: "8px", width: "32px", height: "32px", cursor: "pointer", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "center" }}>↻</button>
+          <button onClick={() => { sessionStorage.removeItem("tweb-auth-ts"); setAuthed(false); }} title="Lock" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)", borderRadius: "8px", width: "32px", height: "32px", cursor: "pointer", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "center" }}>⎋</button>
+          <div style={{ display: "flex", background: "rgba(255,255,255,0.07)", borderRadius: "10px", padding: "3px", gap: "2px" }}>
+            {[{ v: "nigeria", f: "🇳🇬", l: "NG", fl: "Nigeria" }, { v: "ghana", f: "🇬🇭", l: "GH", fl: "Ghana" }].map(c => (
+              <button key={c.v} onClick={() => { setCountry(c.v); setStatusF("all"); setStateF("all"); setAgentF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); setShowFilters(false); }}
+                style={{ padding: "5px 12px", borderRadius: "8px", border: "none", background: country === c.v ? "rgba(255,255,255,0.15)" : "transparent", color: country === c.v ? "#fff" : "rgba(255,255,255,0.45)", cursor: "pointer", fontSize: "12px", fontWeight: 700, fontFamily: T.f, display: "flex", alignItems: "center", gap: "5px", transition: "all .15s" }}>
+                {c.f} {isMobile ? c.l : c.fl}
+                <span style={{ background: "rgba(255,255,255,0.15)", padding: "1px 6px", borderRadius: "4px", fontSize: "10px", fontWeight: 800 }}>{orders.filter(o => o.country === c.v).length}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* DESKTOP TABS */}
-      {!isMobile && <div style={{ background: T.surface, borderBottom: `1px solid ${T.border}`, padding: "0 24px", display: "flex", gap: "2px" }}>
+      {!isMobile && <div style={{ background: T.surface, borderBottom: `1px solid ${T.border}`, padding: "8px 24px", display: "flex", gap: "4px" }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "12px 16px", border: "none", borderBottom: tab === t.id ? `2.5px solid ${T.accent}` : "2.5px solid transparent", background: "none", color: tab === t.id ? T.accent : T.textMuted, fontWeight: tab === t.id ? 700 : 600, cursor: "pointer", fontSize: "13px", fontFamily: T.f, display: "flex", alignItems: "center", gap: "6px" }}>
-            <span>{t.icon}</span> {t.label}
-            {t.count !== undefined && <span style={{ background: tab === t.id ? T.accentLight : T.surfaceAlt, color: tab === t.id ? T.accent : T.textMuted, fontSize: "10px", fontWeight: 800, padding: "1px 6px", borderRadius: "10px" }}>{t.count}</span>}
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "7px 14px", border: "none", borderRadius: T.rs, background: tab === t.id ? T.accentLight : "transparent", color: tab === t.id ? T.accent : T.textMuted, fontWeight: tab === t.id ? 700 : 600, cursor: "pointer", fontSize: "13px", fontFamily: T.f, display: "flex", alignItems: "center", gap: "6px", transition: "all .15s" }}>
+            {t.icon} {t.label}
+            {t.count !== undefined && <span style={{ background: tab === t.id ? T.accentMid : T.borderLight, color: tab === t.id ? T.accent : T.textMuted, fontSize: "10px", fontWeight: 800, padding: "1px 7px", borderRadius: "10px" }}>{t.count}</span>}
           </button>
         ))}
       </div>}
 
-      {/* STATS */}
-      <div style={{ padding: isMobile ? "10px 12px 0" : "14px 24px 0", display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: "11px", color: T.textMuted, fontWeight: 700, marginRight: "4px" }}>Period:</span>
-        {[{ v: "today", l: "Today" }, { v: "week", l: "This Week" }, { v: "month", l: "This Month" }, { v: "30d", l: "30 Days" }, { v: "90d", l: "90 Days" }, { v: "all", l: "All Time" }, { v: "custom", l: "Custom" }].map(r => (
-      <button key={r.v} onClick={() => setStatsRange(r.v)} style={{
-        padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, fontFamily: T.f, cursor: "pointer",
-        border: statsRange === r.v ? `1.5px solid ${T.accent}` : `1.5px solid ${T.border}`,
-        background: statsRange === r.v ? T.accentLight : T.surface,
-        color: statsRange === r.v ? T.accent : T.textMuted
-      }}>{r.l}</button>
-    ))}
+      {/* STATS PERIOD FILTER */}
+      <div style={{ padding: isMobile ? "12px 12px 0" : "16px 24px 0", display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: "11px", color: T.textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", marginRight: "2px" }}>Period</span>
+        {[{ v: "today", l: "Today" }, { v: "week", l: "Week" }, { v: "month", l: "Month" }, { v: "30d", l: "30d" }, { v: "90d", l: "90d" }, { v: "all", l: "All time" }, { v: "custom", l: "Custom" }].map(r => (
+          <button key={r.v} onClick={() => setStatsRange(r.v)} style={{ padding: "5px 13px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, fontFamily: T.f, cursor: "pointer", border: "none", background: statsRange === r.v ? T.accent : T.surface, color: statsRange === r.v ? "#fff" : T.textMuted, boxShadow: statsRange === r.v ? "none" : `0 0 0 1.5px ${T.border}`, transition: "all .15s" }}>{r.l}</button>
+        ))}
         {statsRange === "custom" && <>
-          <input type="date" value={statsFrom} onChange={e => setStatsFrom(e.target.value)} style={{ padding: "4px 8px", borderRadius: "6px", fontSize: "11px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
-          <span style={{ fontSize: "11px", color: T.textMuted }}>to</span>
-          <input type="date" value={statsTo} onChange={e => setStatsTo(e.target.value)} style={{ padding: "4px 8px", borderRadius: "6px", fontSize: "11px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
+          <input type="date" value={statsFrom} onChange={e => setStatsFrom(e.target.value)} style={{ padding: "5px 10px", borderRadius: T.rs, fontSize: "11px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
+          <span style={{ fontSize: "11px", color: T.textMuted }}>→</span>
+          <input type="date" value={statsTo} onChange={e => setStatsTo(e.target.value)} style={{ padding: "5px 10px", borderRadius: T.rs, fontSize: "11px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
         </>}
       </div>
 
-      <div style={{ padding: isMobile ? "12px 12px 8px" : "16px 24px", display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(auto-fit,minmax(120px,1fr))", gap: isMobile ? "8px" : "10px" }}>
-        {[{ l: "Orders", v: stats.total, a: T.sidebar }, { l: "Delivered", v: stats.delivered, s: `${stats.rate}%`, a: "#2E7D32" }, { l: "Units Sold", v: stats.unitsSold, s: `of ${stats.totalUnitsOrdered} ordered`, a: "#6A1B9A" }, { l: "Pending", v: stats.pending, a: T.warning }, { l: "Failed", v: stats.failed, a: T.danger }, { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, a: "#1976D2" },
-          ...(!isMobile ? [{ l: "Fees", v: `${cur}${stats.fees.toLocaleString()}`, a: "#E65100" }, { l: "Net", v: `${cur}${stats.net.toLocaleString()}`, a: "#2E7D32" }] : [])
+      {/* METRIC CARDS */}
+      <div style={{ padding: isMobile ? "12px 12px 8px" : "16px 24px", display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(auto-fit,minmax(130px,1fr))", gap: isMobile ? "8px" : "10px" }}>
+        {[
+          { l: "Orders", v: stats.total, icon: "📋", a: T.text, bg: T.surfaceAlt },
+          { l: "Delivered", v: stats.delivered, s: `${stats.rate}% rate`, icon: "✅", a: "#16A34A", bg: "#F0FDF4" },
+          { l: "Units Sold", v: stats.unitsSold, s: `of ${stats.totalUnitsOrdered}`, icon: "📦", a: "#7C3AED", bg: "#FAF5FF" },
+          { l: "Pending", v: stats.pending, icon: "⏳", a: T.warning, bg: T.warningBg },
+          { l: "Failed", v: stats.failed, icon: "✕", a: T.danger, bg: T.dangerBg },
+          { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, icon: "💰", a: "#1D4ED8", bg: "#EFF6FF" },
+          ...(!isMobile ? [
+            { l: "Fees", v: `${cur}${stats.fees.toLocaleString()}`, icon: "🚚", a: "#EA580C", bg: "#FFF7ED" },
+            { l: "Net", v: `${cur}${stats.net.toLocaleString()}`, icon: "📈", a: "#16A34A", bg: "#F0FDF4" },
+          ] : [])
         ].map((c, i) => (
-          <Card key={i} style={{ padding: isMobile ? "10px 12px" : "14px 16px", borderLeft: `3px solid ${c.a}` }}>
-            <div style={{ fontSize: "9px", color: T.textMuted, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>{c.l}</div>
-            <div style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: 800, fontFamily: T.fd }}>{c.v}</div>
-            {c.s && <div style={{ fontSize: "10px", color: T.textMuted }}>{c.s}</div>}
+          <Card key={i} style={{ padding: isMobile ? "12px 14px" : "14px 16px", background: c.bg, border: `1px solid ${T.border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "8px" }}>
+              <span style={{ fontSize: "12px" }}>{c.icon}</span>
+              <span style={{ fontSize: "10px", color: c.a, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>{c.l}</span>
+            </div>
+            <div style={{ fontSize: isMobile ? "20px" : "24px", fontWeight: 800, fontFamily: T.fd, color: T.text, lineHeight: 1.1 }}>{c.v}</div>
+            {c.s && <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "3px" }}>{c.s}</div>}
           </Card>
         ))}
       </div>
@@ -680,62 +710,72 @@ export default function TwebCRM() {
 
         {/* ═══ ORDERS ═══ */}
         {tab === "orders" && <div>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "10px", flexWrap: "wrap" }}>
-            <input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ flex: 1, minWidth: "140px", padding: "9px 12px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", fontFamily: T.f, outline: "none", background: T.surface }} />
-            {isMobile ? <Btn v="secondary" sz="sm" onClick={() => setShowFilters(!showFilters)}>🔽</Btn> : <>
-              <select value={statusF} onChange={e => setStatusF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All Statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
-              <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All {country === "ghana" ? "Regions" : "States"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
-              <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }} title="From date" />
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }} title="To date" /> 
-              <select value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="all">All Products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: "160px", position: "relative" }}>
+              <span style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: T.textMuted, fontSize: "14px", pointerEvents: "none" }}>🔍</span>
+              <input placeholder="Search orders…" value={search} onChange={e => setSearch(e.target.value)}
+                style={{ width: "100%", padding: "9px 12px 9px 34px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", fontFamily: T.f, outline: "none", background: T.surface, boxSizing: "border-box", transition: "border-color .15s" }}
+                onFocus={e => e.target.style.borderColor = T.accent} onBlur={e => e.target.style.borderColor = T.border} />
+            </div>
+            {isMobile ? <Btn v="secondary" sz="sm" onClick={() => setShowFilters(!showFilters)} style={{ background: showFilters ? T.accentLight : T.surface, color: showFilters ? T.accent : T.text, borderColor: showFilters ? T.accentMid : T.border }}>Filters {showFilters ? "▲" : "▼"}</Btn> : <>
+              {[
+                <select key="s" value={statusF} onChange={e => setStatusF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${statusF !== "all" ? T.accent : T.border}`, borderRadius: T.rs, fontSize: "12px", background: statusF !== "all" ? T.accentLight : T.surface, fontFamily: T.f, color: statusF !== "all" ? T.accent : T.text }}><option value="all">All Statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>,
+                <select key="st" value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${stateF !== "all" ? T.accent : T.border}`, borderRadius: T.rs, fontSize: "12px", background: stateF !== "all" ? T.accentLight : T.surface, fontFamily: T.f, color: stateF !== "all" ? T.accent : T.text }}><option value="all">All {country === "ghana" ? "Regions" : "States"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>,
+                <select key="ag" value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${agentF !== "all" ? T.accent : T.border}`, borderRadius: T.rs, fontSize: "12px", background: agentF !== "all" ? T.accentLight : T.surface, fontFamily: T.f, color: agentF !== "all" ? T.accent : T.text }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>,
+                <input key="df" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${dateFrom ? T.accent : T.border}`, borderRadius: T.rs, fontSize: "12px", background: dateFrom ? T.accentLight : T.surface, fontFamily: T.f }} title="From date" />,
+                <input key="dt" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${dateTo ? T.accent : T.border}`, borderRadius: T.rs, fontSize: "12px", background: dateTo ? T.accentLight : T.surface, fontFamily: T.f }} title="To date" />,
+                <select key="pr" value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${productF !== "all" ? T.accent : T.border}`, borderRadius: T.rs, fontSize: "12px", background: productF !== "all" ? T.accentLight : T.surface, fontFamily: T.f, color: productF !== "all" ? T.accent : T.text }}><option value="all">All Products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>,
+              ]}
             </>}
-            <Btn v={dupeF ? "warning" : "secondary"} sz="sm" onClick={() => setDupeF(!dupeF)}>{dupeF ? "✕" : "👥"}</Btn>
+            <Btn v={dupeF ? "warning" : "secondary"} sz="sm" onClick={() => setDupeF(!dupeF)} title="Show duplicates">{dupeF ? "✕ Dupes" : "👥 Dupes"}</Btn>
             <Btn sz="sm" onClick={() => setShowImport(true)}>📥 Import</Btn>
-            <Btn v="secondary" sz="sm" onClick={() => setShowAddOrder(true)}>+ Add</Btn>
+            <Btn v="secondary" sz="sm" onClick={() => setShowAddOrder(true)}>+ Add Order</Btn>
           </div>
 
-          {isMobile && showFilters && <Card style={{ padding: "12px", marginBottom: "10px" }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-            <select value={statusF} onChange={e => setStatusF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }}><option value="all">All Statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
-            <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }}><option value="all">All {country === "ghana" ? "Regions" : "States"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
-            <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt, gridColumn: "1/-1" }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }} placeholder="From" />
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt }} placeholder="To" />
-            <select value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surfaceAlt, gridColumn: "1/-1" }}><option value="all">All Products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>
+          {isMobile && showFilters && <Card style={{ padding: "14px", marginBottom: "12px" }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+            <select value={statusF} onChange={e => setStatusF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }}><option value="all">All Statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
+            <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }}><option value="all">All {country === "ghana" ? "Regions" : "States"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
+            <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All Agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} placeholder="From" />
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} placeholder="To" />
+            <select value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All Products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>
           </div></Card>}
 
-          {sel.size > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "10px", alignItems: "center", background: "#E3F2FD", padding: "8px 12px", borderRadius: T.rs, border: "1px solid #90CAF9", flexWrap: "wrap", fontSize: "12px" }}>
-            <span style={{ fontWeight: 700, color: "#1565C0" }}>{sel.size} selected →</span>
-            {isMobile ? <select onChange={e => { if (e.target.value) doBulkStatus(e.target.value); e.target.value = ""; }} style={{ padding: "4px 6px", borderRadius: "6px", border: `1px solid ${T.border}`, fontSize: "11px", background: "#fff" }}><option value="">Status...</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
-              : STATUSES.map(s => <Btn key={s.value} v="secondary" sz="xs" onClick={() => doBulkStatus(s.value)}>{s.icon}</Btn>)}
-            {cAgents.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssign(e.target.value); e.target.value = ""; }} style={{ padding: "4px 6px", borderRadius: "6px", border: `1px solid ${T.border}`, fontSize: "11px", background: "#fff" }}><option value="">Assign...</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>}
-            <Btn v="danger" sz="xs" onClick={doBulkDelete} style={{ marginLeft: "auto" }}>🗑 Delete</Btn>
+          {sel.size > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "12px", alignItems: "center", background: T.accentLight, padding: "10px 14px", borderRadius: T.rs, border: `1.5px solid ${T.accentMid}`, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 700, color: T.accent, fontSize: "13px" }}>{sel.size} selected</span>
+            <span style={{ color: T.accentMid }}>→</span>
+            {isMobile ? <select onChange={e => { if (e.target.value) doBulkStatus(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Set status…</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
+              : STATUSES.map(s => <Btn key={s.value} v="secondary" sz="xs" onClick={() => doBulkStatus(s.value)} title={s.label}>{s.icon} {s.label}</Btn>)}
+            {cAgents.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssign(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign to…</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>}
+            <Btn v="danger" sz="xs" onClick={doBulkDelete} style={{ marginLeft: "auto" }}>🗑 Delete {sel.size}</Btn>
             <Btn v="ghost" sz="xs" onClick={() => setSel(new Set())}>✕</Btn>
           </div>}
 
           {/* MOBILE CARDS */}
-          {isMobile ? <div style={{ display: "grid", gap: "8px" }}>
-            {filtered.length === 0 && <Card style={{ padding: "40px 20px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No matches."}</Card>}
-            {pagedOrders.map(o => <Card key={o.id} style={{ padding: "12px", background: sel.has(o.id) ? "#E3F2FD" : T.surface }}>
+          {isMobile ? <div style={{ display: "grid", gap: "10px" }}>
+            {filtered.length === 0 && <Card style={{ padding: "48px 20px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</Card>}
+            {pagedOrders.map(o => <Card key={o.id} style={{ padding: "14px", background: sel.has(o.id) ? T.accentLight : T.surface, border: sel.has(o.id) ? `1.5px solid ${T.accentMid}` : `1px solid ${T.border}` }}>
               <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
-                <input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ marginTop: "3px", width: "16px", height: "16px", accentColor: T.accent }} />
-                <div style={{ flex: 1 }} onClick={() => setViewOrder(o)}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                    <div style={{ fontWeight: 700, fontSize: "14px", fontFamily: T.fd }}>{o.name}{dupeMap[o.id] && <span style={{ background: T.warningBg, color: T.warning, fontSize: "9px", padding: "1px 5px", borderRadius: "4px", marginLeft: "5px" }}>DUPE</span>}</div>
-                    <span style={{ fontWeight: 800, fontFamily: T.fd }}>{cur}{(o.price || 0).toLocaleString()}</span>
+                <input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ marginTop: "3px", width: "16px", height: "16px", accentColor: T.accent, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }} onClick={() => setViewOrder(o)}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px", marginBottom: "4px" }}>
+                    <div style={{ fontWeight: 700, fontSize: "14px", fontFamily: T.fd, color: T.text }}>
+                      {o.name}{dupeMap[o.id] && <span style={{ background: T.warningBg, color: T.warning, fontSize: "9px", padding: "1px 5px", borderRadius: "4px", marginLeft: "6px", fontWeight: 700 }}>DUPE</span>}
+                    </div>
+                    <span style={{ fontWeight: 800, fontFamily: T.fd, fontSize: "14px", flexShrink: 0 }}>{cur}{(o.price || 0).toLocaleString()}</span>
                   </div>
-                  <div style={{ fontSize: "12px", color: T.textMuted, marginBottom: "6px" }}>{cleanPhone(o.phone)} · {o.state} · {o.product} ×{o.qty}</div>
+                  <div style={{ fontSize: "12px", color: T.textMuted, marginBottom: "8px" }}>{cleanPhone(o.phone)} · {o.state} · {o.product} ×{o.qty}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                    <select value={o.status} onChange={e => { e.stopPropagation(); doUpdateStatus(o.id, e.target.value); }} style={{ padding: "3px 6px", borderRadius: "6px", border: `1.5px solid ${getStatus(o.status).color}40`, background: getStatus(o.status).bg, color: getStatus(o.status).color, fontSize: "11px", fontWeight: 700 }}>
+                    <select value={o.status} onChange={e => { e.stopPropagation(); doUpdateStatus(o.id, e.target.value); }} style={{ padding: "4px 8px", borderRadius: "20px", border: `1.5px solid ${getStatus(o.status).color}40`, background: getStatus(o.status).bg, color: getStatus(o.status).color, fontSize: "11px", fontWeight: 700 }}>
                       {STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}
                     </select>
-                    {o.agent_name ? <span style={{ fontSize: "11px", color: T.textMuted }}>{o.agent_name}</span> : <Btn v="ghost" sz="xs" onClick={e => { e.stopPropagation(); setShowAssign(o.id); }} style={{ color: "#1976D2" }}>Assign</Btn>}
+                    {o.agent_name ? <span style={{ fontSize: "11px", color: T.textMuted, background: T.surfaceAlt, padding: "3px 8px", borderRadius: "6px" }}>{o.agent_name}</span> : <Btn v="ghost" sz="xs" onClick={e => { e.stopPropagation(); setShowAssign(o.id); }} style={{ color: T.accent }}>+ Assign</Btn>}
                   </div>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: "6px", marginTop: "8px", paddingTop: "8px", borderTop: `1px solid ${T.borderLight}`, justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", gap: "6px", marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${T.borderLight}`, justifyContent: "flex-end" }}>
                 <a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs">💬 WhatsApp</Btn></a>
-                <Btn v="ghost" sz="xs" onClick={() => setEditOrder({ ...o })}>✏️</Btn>
+                <Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}>✏️ Edit</Btn>
                 <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}>🗑</Btn>
               </div>
             </Card>)}
@@ -744,28 +784,40 @@ export default function TwebCRM() {
             /* DESKTOP TABLE */
             <Card style={{ overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                  <thead><tr style={{ background: T.surfaceAlt }}>
-                    <th style={{ padding: "10px 8px", width: "36px", borderBottom: `1px solid ${T.border}` }}><input type="checkbox" checked={pagedOrders.length > 0 && pagedOrders.every(o => sel.has(o.id))} onChange={toggleAll} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></th>
-                    {["Customer", "Product", country === "ghana" ? "Region" : "State", "Status", "Agent", "Price", ""].map(h => <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: T.textMuted, fontSize: "10px", textTransform: "uppercase", borderBottom: `1px solid ${T.border}` }}>{h}</th>)}
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                  <thead><tr style={{ background: T.surfaceAlt, borderBottom: `1px solid ${T.border}` }}>
+                    <th style={{ padding: "11px 12px", width: "40px" }}><input type="checkbox" checked={pagedOrders.length > 0 && pagedOrders.every(o => sel.has(o.id))} onChange={toggleAll} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></th>
+                    {["Customer", "Product", country === "ghana" ? "Region" : "State", "Status", "Agent", "Price", ""].map(h => <th key={h} style={{ padding: "11px 14px", textAlign: "left", fontWeight: 700, color: T.textMuted, fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.6px" }}>{h}</th>)}
                   </tr></thead>
                   <tbody>
-                    {filtered.length === 0 && <tr><td colSpan={8} style={{ padding: "40px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No matches."}</td></tr>}
-                    {pagedOrders.map(o => <tr key={o.id} style={{ borderBottom: `1px solid ${T.borderLight}`, background: sel.has(o.id) ? "#E3F2FD" : "" }} onMouseEnter={e => { if (!sel.has(o.id)) e.currentTarget.style.background = T.surfaceAlt; }} onMouseLeave={e => { if (!sel.has(o.id)) e.currentTarget.style.background = ""; }}>
-                      <td style={{ padding: "10px 8px" }}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></td>
-                      <td style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => setViewOrder(o)}><div style={{ fontWeight: 700, fontSize: "13px", fontFamily: T.fd }}>{o.name}{dupeMap[o.id] && <span style={{ background: T.warningBg, color: T.warning, fontSize: "9px", padding: "1px 5px", borderRadius: "4px", marginLeft: "5px" }}>DUPE</span>}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{cleanPhone(o.phone)}</div></td>
-                      <td style={{ padding: "10px 12px" }}><div style={{ fontWeight: 600, fontSize: "12px" }}>{o.product}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{o.pack_name} (×{o.qty})</div></td>
-                      <td style={{ padding: "10px 12px", fontSize: "12px", color: T.textMuted }}>{o.state}</td>
-                      <td style={{ padding: "10px 12px" }}><select value={o.status} onChange={e => doUpdateStatus(o.id, e.target.value)} style={{ padding: "4px 6px", borderRadius: "6px", border: `1.5px solid ${getStatus(o.status).color}40`, background: getStatus(o.status).bg, color: getStatus(o.status).color, fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: T.f }}>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select></td>
-                      <td style={{ padding: "10px 12px" }}>{o.agent_name ? <span style={{ fontSize: "11px", fontWeight: 600 }}>{o.agent_name}</span> : <Btn v="ghost" sz="xs" onClick={() => setShowAssign(o.id)} style={{ color: "#1976D2" }}>Assign</Btn>}</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 800, fontFamily: T.fd, fontSize: "13px" }}>{cur}{(o.price || 0).toLocaleString()}{o.delivery_fee > 0 && <div style={{ fontSize: "10px", color: T.danger }}>-{cur}{o.delivery_fee.toLocaleString()}</div>}</td>
-                      <td style={{ padding: "10px 12px" }}><div style={{ display: "flex", gap: "4px" }}><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs">💬</Btn></a><Btn v="ghost" sz="xs" onClick={() => setEditOrder({ ...o })}>✏️</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}>🗑</Btn></div></td>
+                    {filtered.length === 0 && <tr><td colSpan={8} style={{ padding: "56px", textAlign: "center", color: T.textMuted, fontSize: "14px" }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</td></tr>}
+                    {pagedOrders.map((o, idx) => <tr key={o.id}
+                      style={{ borderBottom: `1px solid ${T.borderLight}`, background: sel.has(o.id) ? T.accentLight : idx % 2 === 0 ? T.surface : T.surfaceAlt, transition: "background .1s" }}
+                      onMouseEnter={e => { if (!sel.has(o.id)) e.currentTarget.style.background = T.accentLight + "60"; }}
+                      onMouseLeave={e => { if (!sel.has(o.id)) e.currentTarget.style.background = idx % 2 === 0 ? T.surface : T.surfaceAlt; }}>
+                      <td style={{ padding: "12px 12px" }}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></td>
+                      <td style={{ padding: "12px 14px", cursor: "pointer" }} onClick={() => setViewOrder(o)}>
+                        <div style={{ fontWeight: 700, fontSize: "13px", fontFamily: T.fd, color: T.text }}>{o.name}{dupeMap[o.id] && <span style={{ background: T.warningBg, color: T.warning, fontSize: "9px", padding: "1px 6px", borderRadius: "4px", marginLeft: "6px", fontWeight: 700 }}>DUPE</span>}</div>
+                        <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "1px" }}>{cleanPhone(o.phone)}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px" }}>
+                        <div style={{ fontWeight: 600, fontSize: "13px", color: T.text }}>{o.product}</div>
+                        <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "1px" }}>{o.pack_name} · ×{o.qty}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px", fontSize: "12px", color: T.textMuted }}>{o.state}</td>
+                      <td style={{ padding: "12px 14px" }}><select value={o.status} onChange={e => doUpdateStatus(o.id, e.target.value)} style={{ padding: "5px 8px", borderRadius: "20px", border: `1.5px solid ${getStatus(o.status).color}30`, background: getStatus(o.status).bg, color: getStatus(o.status).color, fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: T.f }}>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select></td>
+                      <td style={{ padding: "12px 14px" }}>{o.agent_name ? <span style={{ fontSize: "12px", fontWeight: 600, background: T.surfaceAlt, padding: "3px 9px", borderRadius: "6px" }}>{o.agent_name}</span> : <Btn v="ghost" sz="xs" onClick={() => setShowAssign(o.id)} style={{ color: T.accent }}>+ Assign</Btn>}</td>
+                      <td style={{ padding: "12px 14px" }}>
+                        <div style={{ fontWeight: 800, fontFamily: T.fd, fontSize: "13px" }}>{cur}{(o.price || 0).toLocaleString()}</div>
+                        {o.delivery_fee > 0 && <div style={{ fontSize: "10px", color: T.danger, marginTop: "1px" }}>-{cur}{o.delivery_fee.toLocaleString()} fee</div>}
+                      </td>
+                      <td style={{ padding: "12px 14px" }}><div style={{ display: "flex", gap: "4px" }}><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs">💬</Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}>✏️</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}>🗑</Btn></div></td>
                     </tr>)}
                   </tbody>
                 </table>
               </div>
-              <div style={{ padding: "4px 12px", borderTop: `1px solid ${T.borderLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "11px", color: T.textMuted }}>{filtered.length} of {cOrders.length}{Object.keys(dupeMap).length > 0 && ` · ${Object.keys(dupeMap).length} dupes`}</span>
+              <div style={{ padding: "8px 14px", borderTop: `1px solid ${T.borderLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: T.surfaceAlt }}>
+                <span style={{ fontSize: "11px", color: T.textMuted }}>{filtered.length} of {cOrders.length} orders{Object.keys(dupeMap).length > 0 && ` · ${Object.keys(dupeMap).length} duplicates`}</span>
                 <Pagination page={ordersPage} total={filtered.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
               </div>
             </Card>
@@ -774,19 +826,33 @@ export default function TwebCRM() {
 
         {/* ═══ AGENTS ═══ */}
         {tab === "agents" && <div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}><h3 style={{ margin: 0, fontFamily: T.fd }}>Delivery Agents</h3><Btn sz="sm" onClick={() => setShowAddAgent(true)}>+ Add</Btn></div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(300px,1fr))", gap: "10px" }}>
-            {cAgents.length === 0 && <Card style={{ padding: "40px", textAlign: "center", color: T.textMuted, gridColumn: "1/-1" }}>No agents yet.</Card>}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+            <h3 style={{ margin: 0, fontFamily: T.fd, fontSize: "17px", color: T.text }}>Delivery Agents</h3>
+            <Btn sz="sm" onClick={() => setShowAddAgent(true)}>+ Add Agent</Btn>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(300px,1fr))", gap: "12px" }}>
+            {cAgents.length === 0 && <Card style={{ padding: "48px", textAlign: "center", color: T.textMuted, gridColumn: "1/-1" }}>No agents yet. Add your first agent to get started.</Card>}
             {cAgents.map(a => { const as = agentSt[a.id] || {}; const rn = parseInt(as.rate); return (
-              <Card key={a.id} style={{ padding: "16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                  <div><div style={{ fontWeight: 700, fontFamily: T.fd }}>{a.name}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{cleanPhone(a.phone)} · {(a.states || []).join(", ")}</div></div>
-                  <div style={{ background: rn >= 70 ? "#E8F5E9" : rn >= 40 ? T.warningBg : as.rate === "-" ? T.surfaceAlt : T.dangerBg, color: rn >= 70 ? "#2E7D32" : rn >= 40 ? T.warning : as.rate === "-" ? T.textMuted : T.danger, padding: "4px 10px", borderRadius: "8px", fontSize: "14px", fontWeight: 800, fontFamily: T.fd }}>{as.rate === "-" ? "—" : as.rate + "%"}</div>
+              <Card key={a.id} style={{ padding: "18px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontFamily: T.fd, fontSize: "15px", color: T.text }}>{a.name}</div>
+                    <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "2px" }}>{cleanPhone(a.phone)} · {(a.states || []).join(", ")}</div>
+                  </div>
+                  <div style={{ background: rn >= 70 ? "#F0FDF4" : rn >= 40 ? T.warningBg : as.rate === "-" ? T.surfaceAlt : T.dangerBg, color: rn >= 70 ? "#16A34A" : rn >= 40 ? T.warning : as.rate === "-" ? T.textMuted : T.danger, padding: "5px 12px", borderRadius: "20px", fontSize: "14px", fontWeight: 800, fontFamily: T.fd }}>{as.rate === "-" ? "—" : as.rate + "%"}</div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "6px" }}>
-                  {[{ l: "Orders", v: as.total || 0 }, { l: "Done", v: as.delivered || 0 }, { l: "Failed", v: as.failed || 0 }, { l: "Stock", v: as.stock || 0 }].map(m => <div key={m.l} style={{ textAlign: "center", padding: "6px", background: T.surfaceAlt, borderRadius: "6px" }}><div style={{ fontWeight: 800, fontSize: "16px", fontFamily: T.fd }}>{m.v}</div><div style={{ fontSize: "9px", color: T.textMuted, textTransform: "uppercase" }}>{m.l}</div></div>)}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px", marginBottom: "12px" }}>
+                  {[{ l: "Orders", v: as.total || 0, c: T.text }, { l: "Done", v: as.delivered || 0, c: "#16A34A" }, { l: "Failed", v: as.failed || 0, c: T.danger }, { l: "Stock", v: as.stock || 0, c: T.accent }].map(m => (
+                    <div key={m.l} style={{ textAlign: "center", padding: "8px 4px", background: T.surfaceAlt, borderRadius: T.rs }}>
+                      <div style={{ fontWeight: 800, fontSize: "18px", fontFamily: T.fd, color: m.c }}>{m.v}</div>
+                      <div style={{ fontSize: "9px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.5px", marginTop: "2px" }}>{m.l}</div>
+                    </div>
+                  ))}
                 </div>
-                <div style={{ display: "flex", gap: "6px", marginTop: "10px" }}><Btn v="secondary" sz="sm" onClick={() => setShowStock(a.id)} style={{ flex: 1 }}>📦 Stock</Btn><Btn v="ghost" sz="sm" onClick={() => doDeleteAgent(a.id)} style={{ color: T.danger }}>🗑</Btn></div>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <Btn v="secondary" sz="sm" onClick={() => setShowStock(a.id)} style={{ flex: 1, justifyContent: "center" }}>📦 Manage Stock</Btn>
+                  <Btn v="ghost" sz="sm" onClick={() => doDeleteAgent(a.id)} style={{ color: T.danger }}>🗑</Btn>
+                </div>
               </Card>
             ); })}
           </div>
@@ -845,8 +911,12 @@ export default function TwebCRM() {
       </div>
 
       {/* MOBILE NAV */}
-      {isMobile && <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: T.surface, borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-around", padding: "6px 0 env(safe-area-inset-bottom,6px)", zIndex: 100, boxShadow: "0 -2px 10px rgba(0,0,0,0.05)" }}>
-        {tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "none", border: "none", padding: "6px 8px", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "2px", color: tab === t.id ? T.accent : T.textMuted, fontFamily: T.f }}><span style={{ fontSize: "18px" }}>{t.icon}</span><span style={{ fontSize: "9px", fontWeight: tab === t.id ? 800 : 600 }}>{t.label}</span></button>)}
+      {isMobile && <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: T.surface, borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-around", padding: "8px 0 env(safe-area-inset-bottom,8px)", zIndex: 100, boxShadow: "0 -4px 16px rgba(0,0,0,0.06)" }}>
+        {tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "none", border: "none", padding: "4px 10px", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", color: tab === t.id ? T.accent : T.textLight, fontFamily: T.f, flex: 1 }}>
+          <span style={{ fontSize: "20px", lineHeight: 1 }}>{t.icon}</span>
+          <span style={{ fontSize: "9px", fontWeight: tab === t.id ? 800 : 600, letterSpacing: "0.2px" }}>{t.label}</span>
+          {tab === t.id && <span style={{ width: "18px", height: "2px", background: T.accent, borderRadius: "2px", marginTop: "1px" }} />}
+        </button>)}
       </div>}
 
       {/* ═══ MODALS ═══ */}
