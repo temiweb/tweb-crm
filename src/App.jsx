@@ -180,6 +180,25 @@ const Btn = ({ children, v, sz, ...p }) => {
 
 const Badge = ({ status }) => { const s = getStatus(status); return <span style={{ background: s.bg, color: s.color, padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, whiteSpace: "nowrap" }}>{s.icon} {s.label}</span>; };
 
+const Pagination = ({ page, total, pageSize, onPage, onPageSize }) => {
+  const totalPages = Math.ceil(total / pageSize);
+  if (total === 0) return null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "10px 0", flexWrap: "wrap", justifyContent: "center" }}>
+      <select value={pageSize} onChange={e => onPageSize(+e.target.value)} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1.5px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f, cursor: "pointer" }}>
+        {[50, 100].map(n => <option key={n} value={n}>{n} per page</option>)}
+      </select>
+      <Btn v="secondary" sz="sm" onClick={() => onPage(0)} disabled={page === 0} style={{ opacity: page === 0 ? 0.4 : 1, cursor: page === 0 ? "default" : "pointer" }}>«</Btn>
+      <Btn v="secondary" sz="sm" onClick={() => onPage(page - 1)} disabled={page === 0} style={{ opacity: page === 0 ? 0.4 : 1, cursor: page === 0 ? "default" : "pointer" }}>‹</Btn>
+      <span style={{ fontSize: "12px", color: T.textMuted, fontWeight: 600, whiteSpace: "nowrap" }}>
+        {page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} of {total}
+      </span>
+      <Btn v="secondary" sz="sm" onClick={() => onPage(page + 1)} disabled={page >= totalPages - 1} style={{ opacity: page >= totalPages - 1 ? 0.4 : 1, cursor: page >= totalPages - 1 ? "default" : "pointer" }}>›</Btn>
+      <Btn v="secondary" sz="sm" onClick={() => onPage(totalPages - 1)} disabled={page >= totalPages - 1} style={{ opacity: page >= totalPages - 1 ? 0.4 : 1, cursor: page >= totalPages - 1 ? "default" : "pointer" }}>»</Btn>
+    </div>
+  );
+};
+
 // ═══════════════════════════════════════════════
 // PIN SCREEN
 // ═══════════════════════════════════════════════
@@ -250,6 +269,8 @@ export default function TwebCRM() {
   const [statsTo, setStatsTo] = useState("");
   const [sel, setSel] = useState(new Set());
   const [showFilters, setShowFilters] = useState(false);
+  const [ordersPage, setOrdersPage] = useState(0);
+  const [ordersPageSize, setOrdersPageSize] = useState(50);
 
   const [viewOrder, setViewOrder] = useState(null);
   const [editOrder, setEditOrder] = useState(null);
@@ -312,6 +333,10 @@ export default function TwebCRM() {
     if (search) { const s = search.toLowerCase(); return [o.name, cleanPhone(o.phone), o.address, o.state, o.product, o.notes].some(f => (f || "").toLowerCase().includes(s)); }
     return true;
   }), [cOrders, statusF, stateF, agentF, dupeF, dateFrom, dateTo, search, dupeMap, productF]);
+
+  useEffect(() => { setOrdersPage(0); }, [search, statusF, stateF, agentF, dupeF, productF, dateFrom, dateTo, country]);
+
+  const pagedOrders = useMemo(() => filtered.slice(ordersPage * ordersPageSize, (ordersPage + 1) * ordersPageSize), [filtered, ordersPage, ordersPageSize]);
 
   const states = useMemo(() => [...new Set(cOrders.map(o => o.state).filter(Boolean))].sort(), [cOrders]);
   const productsList = useMemo(() => [...new Set(cOrders.map(o => o.product).filter(Boolean))].sort(), [cOrders]);
@@ -513,7 +538,7 @@ export default function TwebCRM() {
   const getWALink = (o, statusOverride) => waLink(o.whatsapp || o.phone, fillTpl(templates[statusOverride || o.status] || templates.pending || "", o), o.country);
 
   const toggleSel = id => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const toggleAll = () => { const all = filtered.map(o => o.id); setSel(all.every(id => sel.has(id)) ? new Set() : new Set(all)); };
+  const toggleAll = () => { const all = pagedOrders.map(o => o.id); setSel(all.every(id => sel.has(id)) ? new Set() : new Set(all)); };
 
   // ─── SCREENS ───
   
@@ -654,7 +679,7 @@ export default function TwebCRM() {
           {/* MOBILE CARDS */}
           {isMobile ? <div style={{ display: "grid", gap: "8px" }}>
             {filtered.length === 0 && <Card style={{ padding: "40px 20px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No matches."}</Card>}
-            {filtered.map(o => <Card key={o.id} style={{ padding: "12px", background: sel.has(o.id) ? "#E3F2FD" : T.surface }}>
+            {pagedOrders.map(o => <Card key={o.id} style={{ padding: "12px", background: sel.has(o.id) ? "#E3F2FD" : T.surface }}>
               <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
                 <input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ marginTop: "3px", width: "16px", height: "16px", accentColor: T.accent }} />
                 <div style={{ flex: 1 }} onClick={() => setViewOrder(o)}>
@@ -677,18 +702,19 @@ export default function TwebCRM() {
                 <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}>🗑</Btn>
               </div>
             </Card>)}
+            <Pagination page={ordersPage} total={filtered.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
           </div> : (
             /* DESKTOP TABLE */
             <Card style={{ overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                   <thead><tr style={{ background: T.surfaceAlt }}>
-                    <th style={{ padding: "10px 8px", width: "36px", borderBottom: `1px solid ${T.border}` }}><input type="checkbox" checked={filtered.length > 0 && filtered.every(o => sel.has(o.id))} onChange={toggleAll} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></th>
+                    <th style={{ padding: "10px 8px", width: "36px", borderBottom: `1px solid ${T.border}` }}><input type="checkbox" checked={pagedOrders.length > 0 && pagedOrders.every(o => sel.has(o.id))} onChange={toggleAll} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></th>
                     {["Customer", "Product", country === "ghana" ? "Region" : "State", "Status", "Agent", "Price", ""].map(h => <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: T.textMuted, fontSize: "10px", textTransform: "uppercase", borderBottom: `1px solid ${T.border}` }}>{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {filtered.length === 0 && <tr><td colSpan={8} style={{ padding: "40px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No matches."}</td></tr>}
-                    {filtered.map(o => <tr key={o.id} style={{ borderBottom: `1px solid ${T.borderLight}`, background: sel.has(o.id) ? "#E3F2FD" : "" }} onMouseEnter={e => { if (!sel.has(o.id)) e.currentTarget.style.background = T.surfaceAlt; }} onMouseLeave={e => { if (!sel.has(o.id)) e.currentTarget.style.background = ""; }}>
+                    {pagedOrders.map(o => <tr key={o.id} style={{ borderBottom: `1px solid ${T.borderLight}`, background: sel.has(o.id) ? "#E3F2FD" : "" }} onMouseEnter={e => { if (!sel.has(o.id)) e.currentTarget.style.background = T.surfaceAlt; }} onMouseLeave={e => { if (!sel.has(o.id)) e.currentTarget.style.background = ""; }}>
                       <td style={{ padding: "10px 8px" }}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></td>
                       <td style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => setViewOrder(o)}><div style={{ fontWeight: 700, fontSize: "13px", fontFamily: T.fd }}>{o.name}{dupeMap[o.id] && <span style={{ background: T.warningBg, color: T.warning, fontSize: "9px", padding: "1px 5px", borderRadius: "4px", marginLeft: "5px" }}>DUPE</span>}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{cleanPhone(o.phone)}</div></td>
                       <td style={{ padding: "10px 12px" }}><div style={{ fontWeight: 600, fontSize: "12px" }}>{o.product}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{o.pack_name} (×{o.qty})</div></td>
@@ -701,7 +727,10 @@ export default function TwebCRM() {
                   </tbody>
                 </table>
               </div>
-              <div style={{ padding: "8px 12px", borderTop: `1px solid ${T.borderLight}`, fontSize: "11px", color: T.textMuted, display: "flex", justifyContent: "space-between" }}><span>{filtered.length} of {cOrders.length}</span>{Object.keys(dupeMap).length > 0 && <span>{Object.keys(dupeMap).length} dupes</span>}</div>
+              <div style={{ padding: "4px 12px", borderTop: `1px solid ${T.borderLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "11px", color: T.textMuted }}>{filtered.length} of {cOrders.length}{Object.keys(dupeMap).length > 0 && ` · ${Object.keys(dupeMap).length} dupes`}</span>
+                <Pagination page={ordersPage} total={filtered.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
+              </div>
             </Card>
           )}
         </div>}
