@@ -15,34 +15,47 @@ const ACCESS_PIN = "4285"; // Change this to your real PIN
 
 const sb = {
   headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" },
+  async fetch(url, options = {}) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const r = await fetch(url, { ...options, signal: ctrl.signal });
+      clearTimeout(timer);
+      return r;
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === "AbortError") throw new Error("Request timed out — check your connection.");
+      throw new Error("Connection lost — check your internet and try again.");
+    }
+  },
   async query(table, params = "") {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: this.headers });
-    if (!r.ok) throw new Error(`GET ${table}: ${r.status}`);
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: this.headers });
+    if (!r.ok) throw new Error(`Failed to load ${table} (${r.status})`);
     return r.json();
   },
   async insert(table, data) {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, { method: "POST", headers: this.headers, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
-    if (!r.ok) { const e = await r.text(); throw new Error(`INSERT ${table}: ${r.status} ${e}`); }
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}`, { method: "POST", headers: this.headers, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
+    if (!r.ok) { const e = await r.text(); throw new Error(`Failed to save (${r.status}): ${e}`); }
     return r.json();
   },
   async update(table, match, data) {
     const params = Object.entries(match).map(([k, v]) => `${k}=eq.${v}`).join("&");
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { method: "PATCH", headers: this.headers, body: JSON.stringify(data) });
-    if (!r.ok) throw new Error(`UPDATE ${table}: ${r.status}`);
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { method: "PATCH", headers: this.headers, body: JSON.stringify(data) });
+    if (!r.ok) throw new Error(`Failed to update ${table} (${r.status})`);
     return r.json();
   },
   async delete(table, match) {
     const params = Object.entries(match).map(([k, v]) => `${k}=eq.${v}`).join("&");
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { method: "DELETE", headers: this.headers });
-    if (!r.ok) throw new Error(`DELETE ${table}: ${r.status}`);
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { method: "DELETE", headers: this.headers });
+    if (!r.ok) throw new Error(`Failed to delete (${r.status})`);
   },
   async deleteIn(table, col, ids) {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=in.(${ids.map(i => `"${i}"`).join(",")})`, { method: "DELETE", headers: this.headers });
-    if (!r.ok) throw new Error(`DELETE_IN ${table}: ${r.status}`);
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=in.(${ids.map(i => `"${i}"`).join(",")})`, { method: "DELETE", headers: this.headers });
+    if (!r.ok) throw new Error(`Failed to delete (${r.status})`);
   },
   async upsert(table, data) {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, { method: "POST", headers: { ...this.headers, "Prefer": "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
-    if (!r.ok) { const e = await r.text(); throw new Error(`UPSERT ${table}: ${r.status} ${e}`); }
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}`, { method: "POST", headers: { ...this.headers, "Prefer": "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
+    if (!r.ok) { const e = await r.text(); throw new Error(`Failed to save (${r.status}): ${e}`); }
     return r.json();
   }
 };
@@ -180,6 +193,17 @@ const Btn = ({ children, v, sz, ...p }) => {
 
 const Badge = ({ status }) => { const s = getStatus(status); return <span style={{ background: s.bg, color: s.color, padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, whiteSpace: "nowrap" }}>{s.icon} {s.label}</span>; };
 
+const Toasts = ({ toasts, onDismiss }) => (
+  <div style={{ position: "fixed", bottom: "80px", right: "16px", zIndex: 2000, display: "flex", flexDirection: "column", gap: "8px", maxWidth: "340px", pointerEvents: "none" }}>
+    {toasts.map(t => (
+      <div key={t.id} style={{ background: t.type === "error" ? T.danger : T.accent, color: "#fff", padding: "11px 14px", borderRadius: T.r, boxShadow: T.shl, fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "flex-start", gap: "10px", pointerEvents: "all", animation: "sUp .2s ease" }}>
+        <span style={{ flex: 1 }}>{t.type === "error" ? "⚠ " : "✓ "}{t.msg}</span>
+        <button onClick={() => onDismiss(t.id)} style={{ background: "rgba(255,255,255,0.25)", border: "none", color: "#fff", borderRadius: "4px", cursor: "pointer", padding: "2px 7px", fontSize: "12px", flexShrink: 0 }}>✕</button>
+      </div>
+    ))}
+  </div>
+);
+
 const Pagination = ({ page, total, pageSize, onPage, onPageSize }) => {
   const totalPages = Math.ceil(total / pageSize);
   if (total === 0) return null;
@@ -254,6 +278,13 @@ export default function TwebCRM() {
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [syncError, setSyncError] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const showToast = (msg, type = "error") => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+  };
+  const dismissToast = id => setToasts(prev => prev.filter(t => t.id !== id));
 
   const [tab, setTab] = useState("orders");
   const [country, setCountry] = useState("nigeria");
@@ -404,7 +435,7 @@ export default function TwebCRM() {
       }
       setCountry(det);
       await loadAll();
-    } catch (err) { alert("Import error: " + err.message); }
+    } catch (err) { showToast("Import failed: " + err.message); }
     setSaving(false); setShowImport(false); e.target.value = "";
   };
 
@@ -419,25 +450,25 @@ export default function TwebCRM() {
         if (inv) {
           const qty = order.actual_qty_delivered || order.qty || 0;
           if (status === "delivered" && !wasDelivered) {
-            // Deduct stock
-            const newQty = Math.max(0, inv.qty - qty);
+            const [fresh] = await sb.query("inventory", `id=eq.${inv.id}`);
+            const newQty = Math.max(0, (fresh?.qty ?? inv.qty) - qty);
             await sb.update("inventory", { id: inv.id }, { qty: newQty });
             setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQty } : i));
           } else if (wasDelivered && status !== "delivered") {
-            // Reverse deduction if changing away from delivered
-            const newQty = inv.qty + qty;
+            const [fresh] = await sb.query("inventory", `id=eq.${inv.id}`);
+            const newQty = (fresh?.qty ?? inv.qty) + qty;
             await sb.update("inventory", { id: inv.id }, { qty: newQty });
             setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQty } : i));
           }
         }
       }
-    } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doAssign = async (orderId, agentId) => {
     const a = agents.find(x => x.id === agentId);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
-    try { await sb.update("orders", { id: orderId }, { agent_id: agentId, agent_name: a?.name || "" }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await sb.update("orders", { id: orderId }, { agent_id: agentId, agent_name: a?.name || "" }); } catch (err) { showToast(err.message); await loadAll(); }
     setShowAssign(null);
   };
 
@@ -455,37 +486,37 @@ export default function TwebCRM() {
         if (inv) {
           const oldQty = oldOrder?.actual_qty_delivered || oldOrder?.qty || 0;
           const newQtyDelivered = data.actual_qty_delivered || data.qty || 0;
+          const [fresh] = await sb.query("inventory", `id=eq.${inv.id}`);
+          const currentStock = fresh?.qty ?? inv.qty;
+          let newStock = currentStock;
           if (nowDelivered && !wasDelivered) {
-            const newStock = Math.max(0, inv.qty - newQtyDelivered);
-            await sb.update("inventory", { id: inv.id }, { qty: newStock });
-            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newStock } : i));
+            newStock = Math.max(0, currentStock - newQtyDelivered);
           } else if (wasDelivered && !nowDelivered) {
-            const newStock = inv.qty + oldQty;
-            await sb.update("inventory", { id: inv.id }, { qty: newStock });
-            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newStock } : i));
+            newStock = currentStock + oldQty;
           } else if (wasDelivered && nowDelivered && oldQty !== newQtyDelivered) {
-            const diff = oldQty - newQtyDelivered;
-            const newStock = Math.max(0, inv.qty + diff);
+            newStock = Math.max(0, currentStock + (oldQty - newQtyDelivered));
+          }
+          if (newStock !== currentStock) {
             await sb.update("inventory", { id: inv.id }, { qty: newStock });
             setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newStock } : i));
           }
         }
       }
-    } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await loadAll(); }
     setEditOrder(null);
   };
 
   const doDeleteOrder = async (id) => {
     if (!window.confirm("Delete this order? This cannot be undone.")) return;
     setOrders(prev => prev.filter(o => o.id !== id));
-    try { await sb.delete("orders", { id }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await sb.delete("orders", { id }); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doBulkStatus = async (status) => {
     const ids = [...sel];
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, status } : o));
     setSel(new Set());
-    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { status }))); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { status }))); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doBulkDelete = async () => {
@@ -493,7 +524,7 @@ export default function TwebCRM() {
     const ids = [...sel];
     setOrders(prev => prev.filter(o => !sel.has(o.id)));
     setSel(new Set());
-    try { await sb.deleteIn("orders", "id", ids); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await sb.deleteIn("orders", "id", ids); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doBulkAssign = async (agentId) => {
@@ -501,22 +532,22 @@ export default function TwebCRM() {
     const ids = [...sel];
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
     setSel(new Set());
-    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { agent_id: agentId, agent_name: a?.name || "" }))); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { agent_id: agentId, agent_name: a?.name || "" }))); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doAddAgent = async (data) => {
-    try { await sb.insert("agents", { ...data, country }); await loadAll(); } catch (err) { alert("Error: " + err.message); }
+    try { await sb.insert("agents", { ...data, country }); await loadAll(); } catch (err) { showToast(err.message); }
     setShowAddAgent(false);
   };
 
   const doDeleteAgent = async (id) => {
     if (!window.confirm("Delete this agent?")) return;
     setAgents(prev => prev.filter(a => a.id !== id));
-    try { await sb.delete("agents", { id }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await sb.delete("agents", { id }); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doAddProduct = async (name) => {
-    try { await sb.insert("products", { name }); await loadAll(); } catch (err) { alert("Error: " + err.message); }
+    try { await sb.insert("products", { name }); await loadAll(); } catch (err) { showToast(err.message); }
     setShowAddProduct(false);
   };
 
@@ -524,19 +555,19 @@ export default function TwebCRM() {
     const existing = inventory.find(i => i.agent_id === agentId && i.product_name === productName);
     if (existing) {
       setInventory(prev => prev.map(i => i.id === existing.id ? { ...i, qty } : i));
-      try { await sb.update("inventory", { id: existing.id }, { qty }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+      try { await sb.update("inventory", { id: existing.id }, { qty }); } catch (err) { showToast(err.message); await loadAll(); }
     } else {
-      try { const res = await sb.insert("inventory", { agent_id: agentId, product_name: productName, qty }); setInventory(prev => [...prev, ...(res || [])]); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+      try { const res = await sb.insert("inventory", { agent_id: agentId, product_name: productName, qty }); setInventory(prev => [...prev, ...(res || [])]); } catch (err) { showToast(err.message); await loadAll(); }
     }
   };
 
   const doSaveTemplate = async (key, msg) => {
     setTemplates(prev => ({ ...prev, [key]: msg }));
-    try { await sb.upsert("templates", { status_key: key, message: msg }); } catch (err) { alert("Error: " + err.message); }
+    try { await sb.upsert("templates", { status_key: key, message: msg }); } catch (err) { showToast(err.message); }
   };
 
   const doAddOrder = async (data) => {
-    try { await sb.insert("orders", { ...data, country }); await loadAll(); } catch (err) { alert("Error: " + err.message); }
+    try { await sb.insert("orders", { ...data, country }); await loadAll(); } catch (err) { showToast(err.message); }
     setShowAddOrder(false);
   };
 
@@ -888,6 +919,8 @@ export default function TwebCRM() {
       <Modal open={!!showStock} onClose={() => setShowStock(null)} title={`Stock — ${agents.find(a => a.id === showStock)?.name || ""}`}>
         {showStock && <StockMgr agentId={showStock} products={products} inventory={inventory} onUpdate={doUpdateStock} />}
       </Modal>
+
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
