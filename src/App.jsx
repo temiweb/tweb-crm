@@ -253,6 +253,7 @@ export default function TwebCRM() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [syncError, setSyncError] = useState(false);
 
   const [tab, setTab] = useState("orders");
   const [country, setCountry] = useState("nigeria");
@@ -302,9 +303,10 @@ export default function TwebCRM() {
     setTemplates(tMap);
     setLoadError(null);
     setLoaded(true);
+    setSyncError(false);
   } catch (e) {
     if (!loaded) { setLoadError(e.message); setLoaded(true); }
-    // If already loaded, silently ignore refresh errors — data stays as-is
+    else { setSyncError(true); }
   }
   };
   useEffect(() => { loadAll(); }, []);
@@ -474,6 +476,7 @@ export default function TwebCRM() {
   };
 
   const doDeleteOrder = async (id) => {
+    if (!window.confirm("Delete this order? This cannot be undone.")) return;
     setOrders(prev => prev.filter(o => o.id !== id));
     try { await sb.delete("orders", { id }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
   };
@@ -482,10 +485,11 @@ export default function TwebCRM() {
     const ids = [...sel];
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, status } : o));
     setSel(new Set());
-    try { for (const id of ids) await sb.update("orders", { id }, { status }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { status }))); } catch (err) { alert("Error: " + err.message); await loadAll(); }
   };
 
   const doBulkDelete = async () => {
+    if (!window.confirm(`Delete ${sel.size} order${sel.size !== 1 ? "s" : ""}? This cannot be undone.`)) return;
     const ids = [...sel];
     setOrders(prev => prev.filter(o => !sel.has(o.id)));
     setSel(new Set());
@@ -497,7 +501,7 @@ export default function TwebCRM() {
     const ids = [...sel];
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
     setSel(new Set());
-    try { for (const id of ids) await sb.update("orders", { id }, { agent_id: agentId, agent_name: a?.name || "" }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
+    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { agent_id: agentId, agent_name: a?.name || "" }))); } catch (err) { alert("Error: " + err.message); await loadAll(); }
   };
 
   const doAddAgent = async (data) => {
@@ -506,6 +510,7 @@ export default function TwebCRM() {
   };
 
   const doDeleteAgent = async (id) => {
+    if (!window.confirm("Delete this agent?")) return;
     setAgents(prev => prev.filter(a => a.id !== id));
     try { await sb.delete("agents", { id }); } catch (err) { alert("Error: " + err.message); await loadAll(); }
   };
@@ -588,10 +593,11 @@ export default function TwebCRM() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           {saving && <span style={{ color: T.whatsapp, fontSize: "11px", fontWeight: 700 }}>Saving...</span>}
-          <Btn v="ghost" sz="xs" onClick={loadAll} style={{ color: "rgba(255,255,255,0.6)" }}>🔄</Btn>
+          {syncError && <span style={{ color: "#FF8A65", fontSize: "11px", fontWeight: 700 }} title="Auto-sync failed — click refresh">⚠ Offline</span>}
+          <Btn v="ghost" sz="xs" onClick={() => { setSyncError(false); loadAll(); }} style={{ color: "rgba(255,255,255,0.6)" }}>🔄</Btn>
           <Btn v="ghost" sz="xs" onClick={() => { sessionStorage.removeItem("tweb-auth-ts"); setAuthed(false); }} style={{ color: "rgba(255,255,255,0.4)" }}>🚪</Btn>
           {[{ v: "nigeria", f: "🇳🇬", l: "NG", fl: "Nigeria" }, { v: "ghana", f: "🇬🇭", l: "GH", fl: "Ghana" }].map(c => (
-            <button key={c.v} onClick={() => { setCountry(c.v); setStatusF("all"); setStateF("all"); setAgentF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); }}
+            <button key={c.v} onClick={() => { setCountry(c.v); setStatusF("all"); setStateF("all"); setAgentF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); setShowFilters(false); }}
               style={{ padding: "6px 12px", borderRadius: "8px", border: country === c.v ? `2px solid ${T.accent}` : "2px solid transparent", background: country === c.v ? T.sidebarActive : "rgba(255,255,255,0.06)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 700, fontFamily: T.f, display: "flex", alignItems: "center", gap: "4px" }}>
               {c.f} {isMobile ? c.l : c.fl} <span style={{ background: "rgba(255,255,255,0.15)", padding: "0 5px", borderRadius: "4px", fontSize: "10px" }}>{orders.filter(o => o.country === c.v).length}</span>
             </button>
@@ -902,35 +908,52 @@ function ProductForm({ onSubmit }) {
 
 function OrderForm({ onSubmit, country, cur }) {
   const [f, sF] = useState({ name: "", phone: "", whatsapp: "", address: "", state: "", product: "", pack_name: "", qty: 1, price: 0, notes: "", status: "pending", delivery_fee: 0 });
+  const [err, setErr] = useState("");
   const set = (k, v) => sF(p => ({ ...p, [k]: v }));
+  const handleSubmit = () => {
+    if (!f.name.trim()) return setErr("Customer name is required.");
+    if (!f.phone.trim()) return setErr("Phone number is required.");
+    if (!f.product.trim()) return setErr("Product is required.");
+    setErr("");
+    onSubmit({ ...f, actual_qty_delivered: f.qty, actual_price_collected: f.price });
+  };
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 10px" }}>
-    <Inp label="Name" value={f.name} onChange={e => set("name", e.target.value)} />
-    <Inp label="Phone" value={f.phone} onChange={e => set("phone", e.target.value)} />
+    <Inp label="Name *" value={f.name} onChange={e => set("name", e.target.value)} />
+    <Inp label="Phone *" value={f.phone} onChange={e => set("phone", e.target.value)} />
     <Inp label="WhatsApp" value={f.whatsapp} onChange={e => set("whatsapp", e.target.value)} />
     <Inp label={country === "ghana" ? "Region" : "State"} value={f.state} onChange={e => set("state", e.target.value)} />
     <div style={{ gridColumn: "1/-1" }}><Inp label="Address" value={f.address} onChange={e => set("address", e.target.value)} /></div>
-    <Inp label="Product" value={f.product} onChange={e => set("product", e.target.value)} />
+    <Inp label="Product *" value={f.product} onChange={e => set("product", e.target.value)} />
     <Inp label="Pack" value={f.pack_name} onChange={e => set("pack_name", e.target.value)} />
     <Inp label="Qty" type="number" value={f.qty} onChange={e => set("qty", +e.target.value || 1)} />
     <Inp label={`Price (${cur})`} type="number" value={f.price} onChange={e => set("price", +e.target.value || 0)} />
     <div style={{ gridColumn: "1/-1" }}><Inp label="Notes" value={f.notes} onChange={e => set("notes", e.target.value)} /></div>
-    <div style={{ gridColumn: "1/-1" }}><Btn onClick={() => { if (f.name && f.phone) onSubmit({ ...f, actual_qty_delivered: f.qty, actual_price_collected: f.price }); }} style={{ width: "100%", justifyContent: "center" }}>Add Order</Btn></div>
+    {err && <div style={{ gridColumn: "1/-1", color: "#C62828", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>{err}</div>}
+    <div style={{ gridColumn: "1/-1" }}><Btn onClick={handleSubmit} style={{ width: "100%", justifyContent: "center" }}>Add Order</Btn></div>
   </div>;
+}
+
+function StockItem({ agentId, product, qty, onUpdate }) {
+  const [local, setLocal] = useState(qty);
+  useEffect(() => { setLocal(qty); }, [qty]);
+  const commit = (val) => { const n = Math.max(0, val); setLocal(n); onUpdate(agentId, product, n); };
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "#FAF8F5", borderRadius: "8px", flexWrap: "wrap", gap: "6px" }}>
+      <div style={{ fontWeight: 700, fontSize: "13px" }}>{product}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+        {[-5, -1].map(d => <button key={d} onClick={() => commit(local + d)} style={{ padding: "4px 8px", borderRadius: "6px", border: "1.5px solid #E8E4DF", background: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "11px", fontFamily: "'Nunito Sans',sans-serif" }}>{d}</button>)}
+        <input type="number" value={local} onChange={e => setLocal(+e.target.value || 0)} onBlur={() => commit(local)} style={{ width: "50px", textAlign: "center", padding: "5px", border: "1.5px solid #E8E4DF", borderRadius: "6px", fontWeight: 800, fontFamily: "'Outfit',sans-serif", fontSize: "14px" }} />
+        {[1, 5, 10].map(d => <button key={d} onClick={() => commit(local + d)} style={{ padding: "4px 8px", borderRadius: "6px", border: "1.5px solid #E8E4DF", background: d === 10 ? "#0F7B5F" : "#fff", color: d === 10 ? "#fff" : "#1A1A2E", cursor: "pointer", fontWeight: 700, fontSize: "11px", fontFamily: "'Nunito Sans',sans-serif" }}>+{d}</button>)}
+      </div>
+    </div>
+  );
 }
 
 function StockMgr({ agentId, products, inventory, onUpdate }) {
   const getQ = pid => inventory.find(i => i.agent_id === agentId && i.product_name === pid)?.qty || 0;
   return products.length === 0 ? <p style={{ color: "#8C8C9E", textAlign: "center", padding: "20px" }}>No products yet.</p> : (
-    <div style={{ display: "grid", gap: "8px" }}>{products.map(p => {
-      const q = getQ(p.name);
-      return <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "#FAF8F5", borderRadius: "8px", flexWrap: "wrap", gap: "6px" }}>
-        <div style={{ fontWeight: 700, fontSize: "13px" }}>{p.name}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          {[-5, -1].map(d => <button key={d} onClick={() => onUpdate(agentId, p.name, Math.max(0, q + d))} style={{ padding: "4px 8px", borderRadius: "6px", border: "1.5px solid #E8E4DF", background: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "11px", fontFamily: "'Nunito Sans',sans-serif" }}>{d}</button>)}
-          <input type="number" value={q} onChange={e => onUpdate(agentId, p.name, Math.max(0, +e.target.value || 0))} style={{ width: "50px", textAlign: "center", padding: "5px", border: "1.5px solid #E8E4DF", borderRadius: "6px", fontWeight: 800, fontFamily: "'Outfit',sans-serif", fontSize: "14px" }} />
-          {[1, 5, 10].map(d => <button key={d} onClick={() => onUpdate(agentId, p.name, q + d)} style={{ padding: "4px 8px", borderRadius: "6px", border: "1.5px solid #E8E4DF", background: d === 10 ? "#0F7B5F" : "#fff", color: d === 10 ? "#fff" : "#1A1A2E", cursor: "pointer", fontWeight: 700, fontSize: "11px", fontFamily: "'Nunito Sans',sans-serif" }}>+{d}</button>)}
-        </div>
-      </div>;
-    })}</div>
+    <div style={{ display: "grid", gap: "8px" }}>
+      {products.map(p => <StockItem key={p.id} agentId={agentId} product={p.name} qty={getQ(p.name)} onUpdate={onUpdate} />)}
+    </div>
   );
 }
