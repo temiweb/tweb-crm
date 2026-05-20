@@ -338,7 +338,7 @@ export default function TwebCRM() {
   useEffect(() => { const c = () => setIsMobile(window.innerWidth < 768); c(); window.addEventListener("resize", c); return () => window.removeEventListener("resize", c); }, []);
 
   // ─── LOAD ALL DATA ───
-  const loadAll = async () => {
+  const loadAll = async (retries = 3) => {
   try {
     const [o, a, p, inv, t] = await Promise.all([
       sb.query("orders", "order=created_at.desc"),
@@ -355,8 +355,16 @@ export default function TwebCRM() {
     setLoaded(true);
     setSyncError(false);
   } catch (e) {
-    if (!loaded) { setLoadError(e.message); setLoaded(true); }
-    else { setSyncError(true); }
+    if (!loaded) {
+      if (retries > 1) {
+        await new Promise(r => setTimeout(r, 1500));
+        return loadAll(retries - 1);
+      }
+      setLoadError(e.message);
+      setLoaded(true);
+    } else {
+      setSyncError(true);
+    }
   }
   };
   useEffect(() => { loadAll(); }, []);
@@ -615,8 +623,7 @@ export default function TwebCRM() {
       <Card style={{ padding: "30px", maxWidth: "400px", textAlign: "center" }}>
         <div style={{ fontSize: "32px", marginBottom: "12px" }}>⚠️</div>
         <div style={{ fontFamily: T.fd, fontWeight: 700, fontSize: "18px", marginBottom: "8px" }}>Connection Error</div>
-        <div style={{ color: T.textMuted, fontSize: "13px", marginBottom: "16px" }}>{loadError}</div>
-        <div style={{ fontSize: "12px", color: T.textMuted, marginBottom: "16px" }}>Make sure you've run the SQL schema in Supabase first.</div>
+        <div style={{ color: T.textMuted, fontSize: "13px", marginBottom: "20px" }}>{loadError}</div>
         <Btn onClick={() => { setLoadError(null); setLoaded(false); loadAll(); }}>Retry</Btn>
       </Card>
     </div>
