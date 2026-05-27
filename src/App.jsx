@@ -33,6 +33,23 @@ const sb = {
     if (!r.ok) throw new Error(`Failed to load ${table} (${r.status})`);
     return r.json();
   },
+  async queryAll(table, params = "") {
+    // Supabase caps single requests at 1000 rows — page through until exhausted
+    const pageSize = 1000;
+    let all = [];
+    let offset = 0;
+    while (true) {
+      const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
+        headers: { ...this.headers, "Range-Unit": "items", "Range": `${offset}-${offset + pageSize - 1}` }
+      });
+      if (!r.ok) throw new Error(`Failed to load ${table} (${r.status})`);
+      const rows = await r.json();
+      all = all.concat(rows);
+      if (rows.length < pageSize) break;
+      offset += pageSize;
+    }
+    return all;
+  },
   async insert(table, data) {
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}`, { method: "POST", headers: this.headers, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
     if (!r.ok) { const e = await r.text(); throw new Error(`Failed to save (${r.status}): ${e}`); }
@@ -341,7 +358,7 @@ export default function TwebCRM() {
   const loadAll = async (retries = 3) => {
   try {
     const [o, a, p, inv, t] = await Promise.all([
-      sb.query("orders", "order=created_at.desc"),
+      sb.queryAll("orders", "order=created_at.desc"),
       sb.query("agents", "order=created_at.asc"),
       sb.query("products", "order=created_at.asc"),
       sb.query("inventory"),
