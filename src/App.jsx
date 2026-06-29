@@ -13,8 +13,10 @@ import {
  * Real-time database, multi-device, mobile-first.
  */
 
-const SUPABASE_URL = "https://amdcmtfuytnplrzxabip.supabase.co";
-const SUPABASE_KEY = "sb_publishable_vQ7vHaXXhmLprI6Ph07cDA_wbXkLhB2";
+// Env vars override (used by local .env to point at staging); production has
+// none set on Vercel, so it falls back to the hardcoded prod values below.
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://amdcmtfuytnplrzxabip.supabase.co";
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY || "sb_publishable_vQ7vHaXXhmLprI6Ph07cDA_wbXkLhB2";
 const ACCESS_PIN = "4285"; // Change this to your real PIN
 
 // ═══════════════════════════════════════════════
