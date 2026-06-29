@@ -134,8 +134,10 @@ function parsePackage(pkg, country) {
     const qm = pkg.match(/Buy\s+(\d+)/i), pm = pkg.match(/=\s*GH₵([\d,]+)/);
     return { packName: `Buy ${qm?.[1] || 1} Pack`, qty: qm ? +qm[1] : 1, price: pm ? +pm[1].replace(/,/g, "") : 0 };
   }
-  const qm = pkg.match(/\((\d+)\s+Net/i), pm = pkg.match(/=\s*₦([\d,]+)/), nm = pkg.match(/^([^(]+)/);
-  return { packName: nm ? nm[1].trim() : pkg, qty: qm ? +qm[1] : 1, price: pm ? +pm[1].replace(/,/g, "") : 0 };
+  // Handles both "Buy 3 ... = ₦28,000 (...)" and "Product (10 Net ...) = ₦12,000"
+  const qtyM = pkg.match(/buy\s+(\d+)/i) || pkg.match(/\((\d+)\s+/);
+  const priceM = pkg.match(/₦\s*([\d,]+)/), nm = pkg.match(/^([^=(]+)/);
+  return { packName: (nm ? nm[1] : pkg).trim(), qty: qtyM ? +qtyM[1] : 1, price: priceM ? +priceM[1].replace(/,/g, "") : 0 };
 }
 
 function cleanPhone(p) {
