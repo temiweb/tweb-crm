@@ -67,10 +67,13 @@ Deno.serve(async (req) => {
   const phone = asString(body.phone);
   const name = asString(body.name).trim();
 
-  // entry_id when available; otherwise a stable content key so retries dedup
+  // WPForms can't expose the entry ID at render time, so we dedup on a
+  // date-scoped content key: this collapses a true double-fire of the same
+  // submission, but a genuine re-order on a later day stays a separate order.
+  const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
   const externalId = body.entry_id
     ? `wpforms:${asString(body.entry_id)}`
-    : `wpforms:${cleanPhone(phone)}:${pkgStr}:${name}`.slice(0, 250);
+    : `wpforms:${cleanPhone(phone)}:${pkgStr}:${name}:${day}`.slice(0, 250);
 
   const row = {
     name,
