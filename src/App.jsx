@@ -281,10 +281,10 @@ const CSS = `
 .cx-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
 
 /* ---- KPI ---- */
-.cx-kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-.cx-kpi{padding:15px 17px;border-top:2px solid var(--accent-color,#1a7a4c);position:relative;overflow:hidden}
+.cx-kpis{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.cx-kpi{padding:15px 17px;border-top:2px solid var(--accent-color,#1a7a4c);position:relative;min-width:0}
 .cx-kpi .row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.cx-kpi .v{font-size:26px;font-weight:700;margin-top:9px;line-height:1.05}
+.cx-kpi .v{font-size:26px;font-weight:700;margin-top:9px;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cx-kpi .d{font-size:12px;margin-top:6px;display:inline-flex;align-items:center;gap:4px;font-weight:600}
 .cx-up{color:var(--brand)} .cx-down{color:#b91c1c} .cx-flat{color:var(--muted)}
 
@@ -412,17 +412,21 @@ const StatusSelect = ({ value, onChange, style }) => {
   );
 };
 
-const KPI = ({ accent, v, l, d, dir, icon: Ic }) => (
+const KPI = ({ accent, v, l, d, dir, icon: Ic }) => {
+  const len = String(v).length;
+  const vFont = len > 11 ? "19px" : len > 9 ? "21px" : len > 7 ? "23px" : "26px";
+  return (
   <div className="cx-card cx-kpi" style={{ "--accent-color": accent }}>
     <div className="row">
       <span className="cx-eyebrow">{l}</span>
       {Ic && <Ic size={16} style={{ color: accent }} />}
     </div>
-    <div className="cx-num v">{v}</div>
+    <div className="cx-num v" style={{ fontSize: vFont }}>{v}</div>
     {d && <div className={`d ${dir === "up" ? "cx-up" : dir === "down" ? "cx-down" : "cx-flat"}`}>
       {dir === "up" && <ArrowUpRight size={13} />}{dir === "down" && <ArrowDownRight size={13} />}{d}</div>}
   </div>
-);
+  );
+};
 
 const Toasts = ({ toasts, onDismiss }) => (
   <div className="cx-app" style={{ position: "fixed", bottom: "80px", right: "16px", zIndex: 2000, display: "flex", flexDirection: "column", gap: "8px", maxWidth: "340px", pointerEvents: "none" }}>
