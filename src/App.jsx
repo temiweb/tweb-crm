@@ -732,10 +732,31 @@ export default function InfinistoresCRM() {
     cAgents.forEach(a => {
       const ao = cOrders.filter(o => o.agent_id === a.id);
       const del = ao.filter(o => o.status === "delivered");
-      m[a.id] = { total: ao.length, delivered: del.length, failed: ao.filter(o => o.status === "failed_delivery").length, rate: ao.length > 0 ? ((del.length / ao.length) * 100).toFixed(0) : "-", stock: inventory.filter(i => i.agent_id === a.id).reduce((s, i) => s + i.qty, 0), fees: ao.reduce((s, o) => s + (o.delivery_fee || 0), 0) };
+      const inTransit = ao.filter(o => o.status === "in_transit").length;
+      const cancelled = ao.filter(o => o.status === "cancelled" || o.status === "rejected").length;
+      const failed = ao.filter(o => o.status === "failed_delivery").length;
+      m[a.id] = {
+        total: ao.length, delivered: del.length, inTransit, cancelled, failed,
+        rate: ao.length > 0 ? ((del.length / ao.length) * 100).toFixed(0) : "-",
+        stock: inventory.filter(i => i.agent_id === a.id).reduce((s, i) => s + i.qty, 0),
+        fees: ao.reduce((s, o) => s + (o.delivery_fee || 0), 0),
+        revenue: del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0),
+      };
     });
     return m;
   }, [cAgents, cOrders, inventory]);
+
+  const agentTotals = useMemo(() => {
+    const vals = Object.values(agentSt);
+    const assigned = vals.reduce((s, v) => s + v.total, 0);
+    const delivered = vals.reduce((s, v) => s + v.delivered, 0);
+    return {
+      assigned, delivered,
+      rate: assigned > 0 ? Math.round(delivered / assigned * 100) : 0,
+      units: vals.reduce((s, v) => s + v.stock, 0),
+      revenue: vals.reduce((s, v) => s + v.revenue, 0),
+    };
+  }, [agentSt]);
 
   // ─── DB ACTIONS ───
   // Best-effort status history (won't block or error the status change if the
@@ -1217,21 +1238,31 @@ export default function InfinistoresCRM() {
         <div><h1 className="cx-h1">Agents</h1><div className="cx-sub">Delivery agents and their performance</div></div>
         <Btn onClick={() => setShowAddAgent(true)}><Plus size={16} />Add agent</Btn>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(300px,1fr))", gap: "14px" }}>
+      {cAgents.length > 0 && <div className="cx-grid cx-kpis" style={{ marginBottom: "16px" }}>
+        <KPI accent="#1a7a4c" v={agentTotals.assigned} l="Total assigned" icon={ClipboardList} />
+        <KPI accent="#1d4ed8" v={agentTotals.delivered} l="Delivered" icon={CheckCircle2} />
+        <KPI accent="#f57c00" v={`${agentTotals.rate}%`} l="Avg delivery rate" icon={TrendingUp} />
+        <KPI accent="#7c3aed" v={agentTotals.units} l="Units in field" icon={Package} />
+        <KPI accent="#1a7a4c" v={`${cur}${agentTotals.revenue.toLocaleString()}`} l="Revenue delivered" icon={Wallet} />
+      </div>}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(320px,1fr))", gap: "14px" }}>
         {cAgents.length === 0 && <Card className="cx-empty" style={{ gridColumn: "1/-1" }}><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>No agents yet</div><p style={{ marginTop: "4px" }}>Add your first delivery agent to get started.</p></Card>}
-        {cAgents.map(a => { const as = agentSt[a.id] || {}; const rn = parseInt(as.rate); return (
+        {cAgents.map(a => { const as = agentSt[a.id] || {}; const rn = parseInt(as.rate); const open = Math.max(0, (as.total || 0) - (as.delivered || 0) - (as.inTransit || 0) - (as.cancelled || 0) - (as.failed || 0)); const tot = (as.total || 0) || 1; const seg = [{ v: as.delivered || 0, c: "#1a7a4c" }, { v: as.inTransit || 0, c: "#1d4ed8" }, { v: (as.cancelled || 0) + (as.failed || 0), c: "#b91c1c" }, { v: open, c: "#cbd5e1" }]; return (
           <Card key={a.id} style={{ padding: "18px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
               <div>
                 <div style={{ fontWeight: 700, fontFamily: T.fd, fontSize: "15px", color: T.text }}>{a.name}</div>
                 <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "2px" }}>{cleanPhone(a.phone)} · {(a.states || []).join(", ")}</div>
               </div>
               <div className="cx-num" style={{ background: rn >= 70 ? T.accentLight : rn >= 40 ? T.warningBg : as.rate === "-" ? T.surfaceAlt : T.dangerBg, color: rn >= 70 ? T.accent : rn >= 40 ? T.warning : as.rate === "-" ? T.textMuted : T.danger, padding: "5px 12px", borderRadius: "20px", fontSize: "14px", fontWeight: 800 }}>{as.rate === "-" ? "—" : as.rate + "%"}</div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px", marginBottom: "12px" }}>
-              {[{ l: "Orders", v: as.total || 0, c: T.text }, { l: "Done", v: as.delivered || 0, c: T.accent }, { l: "Failed", v: as.failed || 0, c: T.danger }, { l: "Stock", v: as.stock || 0, c: "#1d4ed8" }].map(m => (
+            <div style={{ display: "flex", height: "8px", borderRadius: "6px", overflow: "hidden", background: T.surfaceAlt, marginBottom: "12px" }}>
+              {seg.map((s, i) => s.v > 0 && <div key={i} style={{ width: `${(s.v / tot) * 100}%`, background: s.c }} />)}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px", marginBottom: "10px" }}>
+              {[{ l: "Assigned", v: as.total || 0, c: T.text }, { l: "Delivered", v: as.delivered || 0, c: T.accent }, { l: "In transit", v: as.inTransit || 0, c: "#1d4ed8" }, { l: "Cancelled", v: (as.cancelled || 0) + (as.failed || 0), c: T.danger }, { l: "Units", v: as.stock || 0, c: "#7c3aed" }, { l: "Revenue", v: `${cur}${(as.revenue || 0).toLocaleString()}`, c: T.accent }].map(m => (
                 <div key={m.l} style={{ textAlign: "center", padding: "8px 4px", background: T.surfaceAlt, borderRadius: T.rs }}>
-                  <div className="cx-num" style={{ fontWeight: 800, fontSize: "18px", color: m.c }}>{m.v}</div>
+                  <div className="cx-num" style={{ fontWeight: 800, fontSize: m.l === "Revenue" ? "13px" : "18px", color: m.c }}>{m.v}</div>
                   <div style={{ fontSize: "9px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.5px", marginTop: "2px" }}>{m.l}</div>
                 </div>
               ))}
