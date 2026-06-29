@@ -100,13 +100,25 @@ const GROUPS = [
 ];
 
 const STATUSES = [
+  // In progress
   { value: "pending", label: "Pending", group: "progress", color: "#b45309", bg: "#fff4e8", icon: "⏳" },
   { value: "confirmed", label: "Confirmed", group: "progress", color: "#1d4ed8", bg: "#e8f1ff", icon: "✓" },
+  { value: "in_transit", label: "In Transit", group: "progress", color: "#0e7490", bg: "#e0f2fe", icon: "🚚" },
+  { value: "call_back", label: "Call Back", group: "progress", color: "#4338ca", bg: "#eef0ff", icon: "📞" },
+  { value: "follow_up", label: "Follow Up", group: "progress", color: "#0f766e", bg: "#e6f5f3", icon: "🔁" },
   { value: "postponed", label: "Postponed", group: "progress", color: "#6d28d9", bg: "#f3ecfe", icon: "⏸" },
+  // Couldn't reach
   { value: "not_reachable", label: "Not Reachable", group: "noreach", color: "#475569", bg: "#eef1f5", icon: "📵" },
-  { value: "out_of_stock", label: "Out of Stock", group: "noreach", color: "#546e7a", bg: "#eceff1", icon: "📦" },
+  { value: "number_busy", label: "Number Busy", group: "noreach", color: "#475569", bg: "#eef1f5", icon: "📳" },
+  { value: "switched_off", label: "Switched Off", group: "noreach", color: "#475569", bg: "#eef1f5", icon: "📴" },
+  { value: "not_answering", label: "Not Answering", group: "noreach", color: "#475569", bg: "#eef1f5", icon: "🔕" },
+  { value: "not_available", label: "Not Available", group: "noreach", color: "#475569", bg: "#eef1f5", icon: "🚫" },
+  // Didn't go through
   { value: "cancelled", label: "Cancelled", group: "failed", color: "#b91c1c", bg: "#fdecec", icon: "✕" },
+  { value: "rejected", label: "Rejected", group: "failed", color: "#9f1239", bg: "#fff1f2", icon: "🙅" },
   { value: "failed_delivery", label: "Failed Delivery", group: "failed", color: "#9f1239", bg: "#fff1f2", icon: "❌" },
+  { value: "out_of_stock", label: "Out of Stock", group: "failed", color: "#546e7a", bg: "#eceff1", icon: "📦" },
+  // Completed
   { value: "delivered", label: "Delivered", group: "done", color: "#15673f", bg: "#e9f4ee", icon: "✅" },
 ];
 
@@ -548,6 +560,7 @@ export default function InfinistoresCRM() {
   const [ordersPageSize, setOrdersPageSize] = useState(50);
 
   const [viewOrder, setViewOrder] = useState(null);
+  const [orderEvents, setOrderEvents] = useState([]);
   const [editOrder, setEditOrder] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
@@ -595,6 +608,19 @@ export default function InfinistoresCRM() {
 
   // Auto-refresh every 30s for multi-device sync
   useEffect(() => { const i = setInterval(loadAll, 30000); return () => clearInterval(i); }, []);
+
+  // Load status history when an order detail is opened (best-effort)
+  useEffect(() => {
+    if (!viewOrder) { setOrderEvents([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const ev = await sb.query("order_status_events", `order_id=eq.${viewOrder.id}&order=changed_at.desc`);
+        if (!cancelled) setOrderEvents(ev || []);
+      } catch { if (!cancelled) setOrderEvents([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [viewOrder]);
 
   // ─── Derived ───
   const cOrders = useMemo(() => orders.filter(o => o.country === country), [orders, country]);
@@ -685,6 +711,13 @@ export default function InfinistoresCRM() {
   }, [cAgents, cOrders, inventory]);
 
   // ─── DB ACTIONS ───
+  // Best-effort status history (won't block or error the status change if the
+  // order_status_events table isn't present yet in a given environment).
+  const logStatus = async (orderId, from, to) => {
+    if (!to || from === to) return;
+    try { await sb.insert("order_status_events", { order_id: orderId, from_status: from || null, to_status: to }); } catch (e) { /* best-effort */ }
+  };
+
   const doImport = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     setSaving(true);
@@ -708,6 +741,7 @@ export default function InfinistoresCRM() {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
     try {
       await sb.update("orders", { id }, { status });
+      logStatus(id, order?.status, status);
       if (order?.agent_id) {
         const inv = inventory.find(i => i.agent_id === order.agent_id && i.product_name === order.product);
         if (inv) {
@@ -743,6 +777,7 @@ export default function InfinistoresCRM() {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, ...data } : o));
     try {
       await sb.update("orders", { id }, data);
+      logStatus(id, oldOrder?.status, data.status);
       const agentId = data.agent_id || oldOrder?.agent_id;
       if (agentId) {
         const inv = inventory.find(i => i.agent_id === agentId && i.product_name === (data.product || oldOrder?.product));
@@ -777,9 +812,13 @@ export default function InfinistoresCRM() {
 
   const doBulkStatus = async (status) => {
     const ids = [...sel];
+    const prevStatus = new Map(orders.filter(o => sel.has(o.id)).map(o => [o.id, o.status]));
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, status } : o));
     setSel(new Set());
-    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { status }))); } catch (err) { showToast(err.message); await loadAll(); }
+    try {
+      await Promise.all(ids.map(id => sb.update("orders", { id }, { status })));
+      ids.forEach(id => logStatus(id, prevStatus.get(id), status));
+    } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doBulkDelete = async () => {
@@ -1210,6 +1249,18 @@ export default function InfinistoresCRM() {
             {o.notes && <div style={{ gridColumn: "1/-1", background: T.warningBg, padding: "10px 12px", borderRadius: T.rs }}><div style={{ fontSize: "10px", color: T.warning, textTransform: "uppercase", fontWeight: 700 }}>Notes</div><div style={{ fontSize: "13px", color: "#92400e" }}>{o.notes}</div></div>}
           </div>
           <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}><div style={{ fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "6px", textTransform: "uppercase" }}>Send WhatsApp</div><div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>{STATUSES.map(s => <a key={s.value} href={getWALink(o, s.value)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}><Btn v={o.status === s.value ? "whatsapp" : "secondary"} sz="sm" style={{ fontSize: "11px" }}>{s.icon} {s.label}</Btn></a>)}</div></div>
+          {orderEvents.length > 0 && <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px", marginTop: "12px" }}>
+            <div style={{ fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "8px", textTransform: "uppercase" }}>Status history</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+              {orderEvents.map(ev => (
+                <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
+                  <span style={{ color: T.textLight, minWidth: "112px" }}>{new Date(ev.changed_at).toLocaleString()}</span>
+                  {ev.from_status && <><Pill status={ev.from_status} /><span style={{ color: T.textLight }}>→</span></>}
+                  <Pill status={ev.to_status} />
+                </div>
+              ))}
+            </div>
+          </div>}
         </div>; })()}
       </Modal>
 
