@@ -281,10 +281,10 @@ const CSS = `
 .cx-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
 
 /* ---- KPI ---- */
-.cx-kpis{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
-.cx-kpi{padding:15px 17px;border-top:2px solid var(--accent-color,#1a7a4c);position:relative;min-width:0}
+.cx-kpis{grid-template-columns:repeat(auto-fit,minmax(178px,1fr))}
+.cx-kpi{padding:15px 16px;border-top:2px solid var(--accent-color,#1a7a4c);position:relative;min-width:0}
 .cx-kpi .row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.cx-kpi .v{font-size:26px;font-weight:700;margin-top:9px;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cx-kpi .v{font-size:26px;font-weight:700;margin-top:9px;line-height:1.05;white-space:nowrap}
 .cx-kpi .d{font-size:12px;margin-top:6px;display:inline-flex;align-items:center;gap:4px;font-weight:600}
 .cx-up{color:var(--brand)} .cx-down{color:#b91c1c} .cx-flat{color:var(--muted)}
 
@@ -414,7 +414,7 @@ const StatusSelect = ({ value, onChange, style }) => {
 
 const KPI = ({ accent, v, l, d, dir, icon: Ic }) => {
   const len = String(v).length;
-  const vFont = len > 11 ? "19px" : len > 9 ? "21px" : len > 7 ? "23px" : "26px";
+  const vFont = len >= 14 ? "15px" : len >= 12 ? "16px" : len >= 10 ? "18px" : len >= 8 ? "22px" : len >= 7 ? "24px" : "26px";
   return (
   <div className="cx-card cx-kpi" style={{ "--accent-color": accent }}>
     <div className="row">
