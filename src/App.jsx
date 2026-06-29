@@ -124,6 +124,12 @@ const STATUSES = [
 
 const getStatus = v => STATUSES.find(s => s.value === v) || STATUSES[0];
 
+const WB_STATUS = {
+  pending: { label: "Pending", color: "#b45309", bg: "#fff4e8" },
+  in_transit: { label: "In transit", color: "#1d4ed8", bg: "#e8f1ff" },
+  delivered: { label: "Delivered", color: "#15673f", bg: "#e9f4ee" },
+};
+
 // ═══════════════════════════════════════════════
 // CONSTANTS & HELPERS
 // ═══════════════════════════════════════════════
@@ -529,6 +535,10 @@ export default function InfinistoresCRM() {
   const [agents, setAgents] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventory, setInventory] = useState([]);
+  const [waybills, setWaybills] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [faulty, setFaulty] = useState([]);
+  const [transfers, setTransfers] = useState([]);
   const [templates, setTemplates] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -543,6 +553,7 @@ export default function InfinistoresCRM() {
   const dismissToast = id => setToasts(prev => prev.filter(t => t.id !== id));
 
   const [tab, setTab] = useState("orders");
+  const [invTab, setInvTab] = useState("products");
   const [collapsed, setCollapsed] = useState(false);
   const [country, setCountry] = useState("nigeria");
   const [search, setSearch] = useState("");
@@ -569,6 +580,10 @@ export default function InfinistoresCRM() {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAssign, setShowAssign] = useState(null);
   const [showStock, setShowStock] = useState(null);
+  const [showAddWaybill, setShowAddWaybill] = useState(false);
+  const [showAddPurchase, setShowAddPurchase] = useState(false);
+  const [showAddFaulty, setShowAddFaulty] = useState(false);
+  const [showAddTransfer, setShowAddTransfer] = useState(false);
   const [showAddOrder, setShowAddOrder] = useState(false);
   const [importCountry, setImportCountry] = useState("auto");
 
@@ -593,6 +608,16 @@ export default function InfinistoresCRM() {
       setLoadError(null);
       setLoaded(true);
       setSyncError(false);
+      // Phase 4 tables — best-effort (may not exist in older environments)
+      try {
+        const [wb, pu, fa, tr] = await Promise.all([
+          sb.query("waybills", "order=created_at.desc"),
+          sb.query("stock_purchases", "order=created_at.desc"),
+          sb.query("faulty_stock", "order=created_at.desc"),
+          sb.query("stock_transfers", "order=created_at.desc"),
+        ]);
+        setWaybills(wb || []); setPurchases(pu || []); setFaulty(fa || []); setTransfers(tr || []);
+      } catch { /* inventory tables not present yet */ }
     } catch (e) {
       if (!loaded) {
         if (retries > 1) {
@@ -865,6 +890,112 @@ export default function InfinistoresCRM() {
     }
   };
 
+  // ─── Phase 4: warehouse / waybills / purchases / faulty ───
+  const doSetWarehouseQty = async (prod, qty) => {
+    const q = Math.max(0, qty);
+    setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: q } : p));
+    try { await sb.update("products", { id: prod.id }, { warehouse_qty: q }); } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  const doAddPurchase = async (data) => {
+    try {
+      const res = await sb.insert("stock_purchases", data);
+      setPurchases(prev => [...(res || []), ...prev]);
+      const prod = products.find(p => p.name === data.product_name);
+      if (prod) {
+        const newQty = (prod.warehouse_qty || 0) + (data.quantity || 0);
+        await sb.update("products", { id: prod.id }, { warehouse_qty: newQty });
+        setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: newQty } : p));
+      }
+    } catch (err) { showToast(err.message); }
+    setShowAddPurchase(false);
+  };
+
+  const doAddWaybill = async (data) => {
+    try {
+      const res = await sb.insert("waybills", { ...data, status: "pending" });
+      setWaybills(prev => [...(res || []), ...prev]);
+    } catch (err) { showToast(err.message); }
+    setShowAddWaybill(false);
+  };
+
+  const doSetWaybillStatus = async (wb, status) => {
+    const wasDelivered = wb.status === "delivered";
+    const nowDelivered = status === "delivered";
+    const patch = { status };
+    if (nowDelivered && !wasDelivered) patch.delivered_at = new Date().toISOString();
+    setWaybills(prev => prev.map(w => w.id === wb.id ? { ...w, ...patch } : w));
+    try {
+      await sb.update("waybills", { id: wb.id }, patch);
+      if (nowDelivered && !wasDelivered) {
+        const prod = products.find(p => p.name === wb.product_name);
+        if (prod) {
+          const newWh = Math.max(0, (prod.warehouse_qty || 0) - wb.quantity);
+          await sb.update("products", { id: prod.id }, { warehouse_qty: newWh });
+          setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: newWh } : p));
+        }
+        if (wb.agent_id) {
+          const inv = inventory.find(i => i.agent_id === wb.agent_id && i.product_name === wb.product_name);
+          if (inv) {
+            const newQ = inv.qty + wb.quantity;
+            await sb.update("inventory", { id: inv.id }, { qty: newQ });
+            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQ } : i));
+          } else {
+            const res = await sb.insert("inventory", { agent_id: wb.agent_id, product_name: wb.product_name, qty: wb.quantity });
+            setInventory(prev => [...prev, ...(res || [])]);
+          }
+        }
+      }
+    } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  const doAddFaulty = async (data) => {
+    try {
+      const res = await sb.insert("faulty_stock", { ...data, agent_id: data.agent_id || null });
+      setFaulty(prev => [...(res || []), ...prev]);
+      if (data.agent_id) {
+        const inv = inventory.find(i => i.agent_id === data.agent_id && i.product_name === data.product_name);
+        if (inv) {
+          const newQ = Math.max(0, inv.qty - data.quantity);
+          await sb.update("inventory", { id: inv.id }, { qty: newQ });
+          setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQ } : i));
+        }
+      } else {
+        const prod = products.find(p => p.name === data.product_name);
+        if (prod) {
+          const newWh = Math.max(0, (prod.warehouse_qty || 0) - data.quantity);
+          await sb.update("products", { id: prod.id }, { warehouse_qty: newWh });
+          setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: newWh } : p));
+        }
+      }
+    } catch (err) { showToast(err.message); }
+    setShowAddFaulty(false);
+  };
+
+  const doAddTransfer = async (data) => {
+    const { from_agent_id, to_agent_id, product_name, quantity } = data;
+    try {
+      const res = await sb.insert("stock_transfers", data);
+      setTransfers(prev => [...(res || []), ...prev]);
+      const fromInv = inventory.find(i => i.agent_id === from_agent_id && i.product_name === product_name);
+      if (fromInv) {
+        const nq = Math.max(0, fromInv.qty - quantity);
+        await sb.update("inventory", { id: fromInv.id }, { qty: nq });
+        setInventory(prev => prev.map(i => i.id === fromInv.id ? { ...i, qty: nq } : i));
+      }
+      const toInv = inventory.find(i => i.agent_id === to_agent_id && i.product_name === product_name);
+      if (toInv) {
+        const nq = toInv.qty + quantity;
+        await sb.update("inventory", { id: toInv.id }, { qty: nq });
+        setInventory(prev => prev.map(i => i.id === toInv.id ? { ...i, qty: nq } : i));
+      } else {
+        const ins = await sb.insert("inventory", { agent_id: to_agent_id, product_name, qty: quantity });
+        setInventory(prev => [...prev, ...(ins || [])]);
+      }
+    } catch (err) { showToast(err.message); await loadAll(); }
+    setShowAddTransfer(false);
+  };
+
   const doSaveTemplate = async (key, msg) => {
     setTemplates(prev => ({ ...prev, [key]: msg }));
     try { await sb.upsert("templates", { status_key: key, message: msg }); } catch (err) { showToast(err.message); }
@@ -1116,22 +1247,118 @@ export default function InfinistoresCRM() {
   );
 
   // ── INVENTORY ──
+  const invSubs = [
+    { id: "products", label: "Products" },
+    { id: "agent", label: "Agent stock" },
+    { id: "waybills", label: "Waybills" },
+    { id: "transfers", label: "Transfers" },
+    { id: "buy", label: "Buy stock" },
+    { id: "faulty", label: "Faulty stock" },
+  ];
+  const withAgents = name => cAgents.reduce((s, a) => s + (inventory.find(i => i.agent_id === a.id && i.product_name === name)?.qty || 0), 0);
+  const agentName = id => agents.find(a => a.id === id)?.name || "—";
+  const invHeaderBtn = {
+    products: <Btn onClick={() => setShowAddProduct(true)}><Plus size={16} />Add product</Btn>,
+    waybills: <Btn onClick={() => setShowAddWaybill(true)}><Plus size={16} />New waybill</Btn>,
+    transfers: <Btn onClick={() => setShowAddTransfer(true)}><Plus size={16} />New transfer</Btn>,
+    buy: <Btn onClick={() => setShowAddPurchase(true)}><Plus size={16} />Record purchase</Btn>,
+    faulty: <Btn onClick={() => setShowAddFaulty(true)}><Plus size={16} />Log faulty</Btn>,
+  }[invTab];
+
   const InventoryScreen = (
     <div>
       <div className="cx-head">
-        <div><h1 className="cx-h1">Inventory</h1><div className="cx-sub">Field stock held by each agent</div></div>
-        <Btn onClick={() => setShowAddProduct(true)}><Plus size={16} />Add product</Btn>
+        <div><h1 className="cx-h1">Inventory &amp; stock</h1><div className="cx-sub">Warehouse and field stock in one place</div></div>
+        {invHeaderBtn}
       </div>
-      {products.length === 0 ? <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No products yet</div></Card> : <div style={{ display: "grid", gap: "10px" }}>
-        {products.map(p => { const total = cAgents.reduce((s, a) => s + (inventory.find(i => i.agent_id === a.id && i.product_name === p.name)?.qty || 0), 0); return (
+      <div className="cx-tabs">{invSubs.map(s => <button key={s.id} className={`cx-tab ${invTab === s.id ? "on" : ""}`} onClick={() => setInvTab(s.id)}>{s.label}</button>)}</div>
+
+      {invTab === "products" && (products.length === 0 ? <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No products yet</div></Card> :
+        <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Product</th><th className="r">In warehouse</th><th className="r">With agents</th><th className="r">Total</th></tr></thead>
+          <tbody>{products.map(p => { const wa = withAgents(p.name); const wh = p.warehouse_qty || 0; return (
+            <tr key={p.id}>
+              <td><b style={{ fontWeight: 600 }}>{p.name}</b></td>
+              <td className="r"><input type="number" defaultValue={wh} key={wh} onBlur={e => { const v = Math.max(0, +e.target.value || 0); if (v !== wh) doSetWarehouseQty(p, v); }} style={{ width: "72px", textAlign: "right", padding: "5px 8px", border: `1.5px solid ${T.border}`, borderRadius: "6px", fontFamily: T.fd, fontWeight: 700 }} /></td>
+              <td className="r cx-num" style={{ color: wa ? T.accent : T.textLight }}>{wa}</td>
+              <td className="r cx-num" style={{ fontWeight: 800 }}>{wh + wa}</td>
+            </tr>
+          ); })}</tbody>
+        </table></div></Card>
+      )}
+
+      {invTab === "agent" && (cAgents.length === 0 ? <Card className="cx-empty"><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>No agents yet</div></Card> :
+        <div style={{ display: "grid", gap: "10px" }}>{products.map(p => (
           <Card key={p.id} style={{ padding: "16px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: cAgents.length ? "10px" : 0 }}><span style={{ fontWeight: 700, fontFamily: T.fd, fontSize: "15px" }}>{p.name}</span><span className="cx-num" style={{ fontWeight: 800, fontSize: "18px", color: total === 0 ? T.textLight : T.accent }}>{total} <span style={{ fontSize: "12px", color: T.textMuted, fontWeight: 600 }}>with agents</span></span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}><span style={{ fontWeight: 700, fontFamily: T.fd, fontSize: "15px" }}>{p.name}</span><span className="cx-num" style={{ fontWeight: 800, fontSize: "18px", color: withAgents(p.name) ? T.accent : T.textLight }}>{withAgents(p.name)} <span style={{ fontSize: "12px", color: T.textMuted, fontWeight: 600 }}>with agents</span></span></div>
             {cAgents.map(a => { const q = inventory.find(i => i.agent_id === a.id && i.product_name === p.name)?.qty || 0; return (
               <div key={a.id} className="cx-list-row" style={{ padding: "7px 0", fontSize: "13px" }}><span style={{ color: T.textMuted }}>{a.name}</span><span className="cx-num" style={{ fontWeight: 700, color: q <= 5 && q > 0 ? T.danger : q === 0 ? T.textLight : T.text }}>{q}{q > 0 && q <= 5 && " ⚠"}</span></div>
             ); })}
           </Card>
-        ); })}
-      </div>}
+        ))}</div>
+      )}
+
+      {invTab === "waybills" && (waybills.length === 0 ? <Card className="cx-empty"><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>No waybills yet</div><p style={{ marginTop: "4px" }}>Dispatch warehouse stock to an agent; mark it delivered to move it into their stock.</p></Card> :
+        <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Date</th><th>Product</th><th>Agent</th><th className="r">Qty</th><th>Status</th><th className="r">Action</th></tr></thead>
+          <tbody>{waybills.map(w => { const st = WB_STATUS[w.status] || WB_STATUS.pending; return (
+            <tr key={w.id}>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(w.created_at).toLocaleDateString()}</td>
+              <td>{w.product_name}</td>
+              <td style={{ fontSize: "12px" }}>{agentName(w.agent_id)}</td>
+              <td className="r cx-num" style={{ fontWeight: 700 }}>{w.quantity}</td>
+              <td><span className="cx-pill" style={{ color: st.color, background: st.bg }}><span className="dot" />{st.label}</span></td>
+              <td className="r">{w.status === "delivered" ? <span style={{ fontSize: "11px", color: T.textMuted }}>{w.delivered_at ? new Date(w.delivered_at).toLocaleDateString() : "✓"}</span> : <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{w.status === "pending" && <Btn v="secondary" sz="xs" onClick={() => doSetWaybillStatus(w, "in_transit")}>In transit</Btn>}<Btn sz="xs" onClick={() => doSetWaybillStatus(w, "delivered")}>Delivered</Btn></div>}</td>
+            </tr>
+          ); })}</tbody>
+        </table></div></Card>
+      )}
+
+      {invTab === "transfers" && (transfers.length === 0 ? <Card className="cx-empty"><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>No transfers yet</div><p style={{ marginTop: "4px" }}>Move stock from one agent to another to rebalance the field.</p></Card> :
+        <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Date</th><th>Product</th><th>From</th><th>To</th><th className="r">Qty</th></tr></thead>
+          <tbody>{transfers.map(t => (
+            <tr key={t.id}>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(t.created_at).toLocaleDateString()}</td>
+              <td>{t.product_name}</td>
+              <td style={{ fontSize: "12px" }}>{agentName(t.from_agent_id)}</td>
+              <td style={{ fontSize: "12px" }}>{agentName(t.to_agent_id)}</td>
+              <td className="r cx-num" style={{ fontWeight: 700 }}>{t.quantity}</td>
+            </tr>
+          ))}</tbody>
+        </table></div></Card>
+      )}
+
+      {invTab === "buy" && (purchases.length === 0 ? <Card className="cx-empty"><Package size={40} /><div className="cx-section-t" style={{ color: T.text }}>No purchases logged</div></Card> :
+        <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Date</th><th>Product</th><th className="r">Qty</th><th className="r">Unit cost</th><th className="r">Total</th><th>Note</th></tr></thead>
+          <tbody>{purchases.map(pu => (
+            <tr key={pu.id}>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(pu.created_at).toLocaleDateString()}</td>
+              <td>{pu.product_name}</td>
+              <td className="r cx-num">{pu.quantity}</td>
+              <td className="r cx-num">{pu.unit_cost != null ? cur + (+pu.unit_cost).toLocaleString() : "—"}</td>
+              <td className="r cx-num" style={{ fontWeight: 700 }}>{pu.unit_cost != null ? cur + (pu.quantity * +pu.unit_cost).toLocaleString() : "—"}</td>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{pu.note}</td>
+            </tr>
+          ))}</tbody>
+        </table></div></Card>
+      )}
+
+      {invTab === "faulty" && (faulty.length === 0 ? <Card className="cx-empty"><Package size={40} /><div className="cx-section-t" style={{ color: T.text }}>No faulty stock logged</div></Card> :
+        <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Date</th><th>Product</th><th>From</th><th className="r">Qty</th><th>Reason</th></tr></thead>
+          <tbody>{faulty.map(f => (
+            <tr key={f.id}>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(f.created_at).toLocaleDateString()}</td>
+              <td>{f.product_name}</td>
+              <td style={{ fontSize: "12px" }}>{f.agent_id ? agentName(f.agent_id) : "Warehouse"}</td>
+              <td className="r cx-num" style={{ fontWeight: 700 }}>{f.quantity}</td>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{f.reason}</td>
+            </tr>
+          ))}</tbody>
+        </table></div></Card>
+      )}
     </div>
   );
 
@@ -1317,6 +1544,22 @@ export default function InfinistoresCRM() {
       <Modal open={!!showStock} onClose={() => setShowStock(null)} title={`Stock — ${agents.find(a => a.id === showStock)?.name || ""}`}>
         {showStock && <StockMgr agentId={showStock} products={products} inventory={inventory} onUpdate={doUpdateStock} />}
       </Modal>
+
+      <Modal open={showAddWaybill} onClose={() => setShowAddWaybill(false)} title="New waybill">
+        <WaybillForm products={products} agents={cAgents} onSubmit={doAddWaybill} />
+      </Modal>
+
+      <Modal open={showAddPurchase} onClose={() => setShowAddPurchase(false)} title="Record purchase">
+        <PurchaseForm products={products} cur={cur} onSubmit={doAddPurchase} />
+      </Modal>
+
+      <Modal open={showAddFaulty} onClose={() => setShowAddFaulty(false)} title="Log faulty / returned stock">
+        <FaultyForm products={products} agents={cAgents} onSubmit={doAddFaulty} />
+      </Modal>
+
+      <Modal open={showAddTransfer} onClose={() => setShowAddTransfer(false)} title="Transfer stock between agents">
+        <TransferForm products={products} agents={cAgents} onSubmit={doAddTransfer} />
+      </Modal>
     </>
   );
 
@@ -1421,6 +1664,84 @@ function AgentForm({ onSubmit, country }) {
 function ProductForm({ onSubmit }) {
   const [n, sN] = useState("");
   return <div><Inp label="Product name" value={n} onChange={e => sN(e.target.value)} /><Btn onClick={() => { if (n) onSubmit(n); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Add product</Btn></div>;
+}
+
+const fLbl = { display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.6px" };
+const fSel = { width: "100%", padding: "10px 13px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "14px", fontFamily: T.f, background: T.surface, marginBottom: "12px", boxSizing: "border-box" };
+
+function WaybillForm({ products, agents, onSubmit }) {
+  const [pn, setPn] = useState(products[0]?.name || "");
+  const [ag, setAg] = useState("");
+  const [qty, setQty] = useState(1);
+  const [err, setErr] = useState("");
+  return <div>
+    {products.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add a product first.</div>}
+    {agents.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add an agent first.</div>}
+    <label style={fLbl}>Product</label>
+    <select value={pn} onChange={e => setPn(e.target.value)} style={fSel}>{products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select>
+    <label style={fLbl}>Agent</label>
+    <select value={ag} onChange={e => setAg(e.target.value)} style={fSel}><option value="">Select agent…</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+    <Inp label="Quantity" type="number" value={qty} onChange={e => setQty(+e.target.value || 0)} />
+    {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
+    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (!ag) return setErr("Pick an agent."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, agent_id: ag, quantity: qty }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Create waybill</Btn>
+  </div>;
+}
+
+function PurchaseForm({ products, cur, onSubmit }) {
+  const [pn, setPn] = useState(products[0]?.name || "");
+  const [qty, setQty] = useState(1);
+  const [cost, setCost] = useState("");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  return <div>
+    {products.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add a product first.</div>}
+    <label style={fLbl}>Product</label>
+    <select value={pn} onChange={e => setPn(e.target.value)} style={fSel}>{products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select>
+    <Inp label="Quantity" type="number" value={qty} onChange={e => setQty(+e.target.value || 0)} />
+    <Inp label={`Unit cost (${cur}) — optional`} type="number" value={cost} onChange={e => setCost(e.target.value)} />
+    <Inp label="Note — optional" value={note} onChange={e => setNote(e.target.value)} />
+    {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
+    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, quantity: qty, unit_cost: cost === "" ? null : +cost, note }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Record purchase</Btn>
+  </div>;
+}
+
+function TransferForm({ products, agents, onSubmit }) {
+  const [pn, setPn] = useState(products[0]?.name || "");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [qty, setQty] = useState(1);
+  const [err, setErr] = useState("");
+  return <div>
+    {agents.length < 2 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>You need at least two agents to transfer between.</div>}
+    <label style={fLbl}>Product</label>
+    <select value={pn} onChange={e => setPn(e.target.value)} style={fSel}>{products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select>
+    <label style={fLbl}>From agent</label>
+    <select value={from} onChange={e => setFrom(e.target.value)} style={fSel}><option value="">Select agent…</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+    <label style={fLbl}>To agent</label>
+    <select value={to} onChange={e => setTo(e.target.value)} style={fSel}><option value="">Select agent…</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+    <Inp label="Quantity" type="number" value={qty} onChange={e => setQty(+e.target.value || 0)} />
+    {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
+    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (!from) return setErr("Pick the source agent."); if (!to) return setErr("Pick the destination agent."); if (from === to) return setErr("Source and destination must be different."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, from_agent_id: from, to_agent_id: to, quantity: qty }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Transfer</Btn>
+  </div>;
+}
+
+function FaultyForm({ products, agents, onSubmit }) {
+  const [pn, setPn] = useState(products[0]?.name || "");
+  const [src, setSrc] = useState("warehouse");
+  const [qty, setQty] = useState(1);
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState("");
+  return <div>
+    {products.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add a product first.</div>}
+    <label style={fLbl}>Product</label>
+    <select value={pn} onChange={e => setPn(e.target.value)} style={fSel}>{products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select>
+    <label style={fLbl}>From</label>
+    <select value={src} onChange={e => setSrc(e.target.value)} style={fSel}><option value="warehouse">Warehouse</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+    <Inp label="Quantity" type="number" value={qty} onChange={e => setQty(+e.target.value || 0)} />
+    <Inp label="Reason — optional" value={reason} onChange={e => setReason(e.target.value)} />
+    {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
+    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, agent_id: src === "warehouse" ? null : src, quantity: qty, reason }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Log faulty</Btn>
+  </div>;
 }
 
 function OrderForm({ onSubmit, country, cur }) {
