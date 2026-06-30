@@ -4,7 +4,8 @@ import {
   Search, Bell, ChevronDown, PanelLeftClose, PanelLeftOpen,
   Phone, MessageCircle, Plus, ArrowUpRight, ArrowDownRight,
   Store, RefreshCw, LogOut, Upload, Users, Pencil, Trash2, X,
-  Package, TrendingUp, Wallet, CheckCircle2, Clock, Filter
+  Package, TrendingUp, Wallet, CheckCircle2, Clock, Filter,
+  Copy, UserPlus, AlertTriangle
 } from "lucide-react";
 
 /*
@@ -206,6 +207,35 @@ const STATUSES = [
 ];
 
 const getStatus = v => STATUSES.find(s => s.value === v) || STATUSES[0];
+
+// ── Phase 7: Caller workflow (feature-flagged; dark in prod until VITE_FEATURE_CALLER=true) ──
+const FEATURE_CALLER = import.meta.env.VITE_FEATURE_CALLER === "true";
+const STALE_HOURS = 48; // an In Transit order older than this shows on the chase-up list
+
+// status → effectiveness stage (report-only grouping; separate from the dropdown GROUPS)
+const STAGE_OF = {
+  pending: "in_progress", call_back: "in_progress", postponed: "in_progress", follow_up: "in_progress",
+  confirmed: "moving", in_transit: "moving",
+  delivered: "delivered",
+  not_reachable: "lost_on_call", number_busy: "lost_on_call", switched_off: "lost_on_call",
+  not_answering: "lost_on_call", not_available: "lost_on_call", cancelled: "lost_on_call", rejected: "lost_on_call",
+  failed_delivery: "lost_on_delivery",
+  out_of_stock: "unfulfilled",
+};
+const CALLER_QUEUE_STATUSES = ["pending", "call_back", "postponed", "follow_up"];
+
+// One order → clean WhatsApp-group payload for the clipboard
+function orderClipboard(o, cur) {
+  return [
+    `NEW ORDER — ${o.product || ""} x${o.qty || 1}`,
+    `Name: ${o.name || ""}`,
+    `Phone: ${cleanPhone(o.phone)}`,
+    `Address: ${o.address || ""}`,
+    o.landmark ? `Landmark: ${o.landmark}` : null,
+    `Amount to collect: ${cur}${(o.price || 0).toLocaleString()}`,
+    o.notes ? `Note: ${o.notes}` : null,
+  ].filter(Boolean).join("\n");
+}
 
 const WB_STATUS = {
   pending: { label: "Pending", color: "#b45309", bg: "#fff4e8" },
@@ -854,6 +884,8 @@ export default function InfinistoresCRM() {
   // ─── Derived ───
   const cOrders = useMemo(() => orders.filter(o => o.country === country), [orders, country]);
   const cAgents = useMemo(() => agents.filter(a => a.country === country), [agents, country]);
+  const callers = useMemo(() => staff.filter(s => s.role === "caller" && s.active), [staff]);
+  const staffByUid = useMemo(() => { const m = {}; staff.forEach(s => { if (s.auth_user_id) m[s.auth_user_id] = s; }); return m; }, [staff]);
 
   const dupeMap = useMemo(() => {
     const pm = {}; cOrders.forEach(o => { const k = cleanPhone(o.phone); if (k) { if (!pm[k]) pm[k] = []; pm[k].push(o.id); } });
@@ -960,12 +992,37 @@ export default function InfinistoresCRM() {
     };
   }, [agentSt]);
 
+  // Phase 7: per-caller effectiveness (over the selected stats period)
+  const callerStats = useMemo(() => callers.map(c => {
+    const co = statsOrders.filter(o => o.assigned_to === c.auth_user_id);
+    const by = stage => co.filter(o => STAGE_OF[o.status] === stage).length;
+    const delivered = by("delivered"), lostCall = by("lost_on_call"), lostDel = by("lost_on_delivery"), unfulfilled = by("unfulfilled");
+    const open = Math.max(0, co.length - delivered - lostCall - lostDel - unfulfilled);
+    const pct = n => co.length ? Math.round(n / co.length * 100) : 0;
+    return { id: c.id, name: c.full_name || c.email, assigned: co.length, delivered, lostCall, lostDel, open, rate: pct(delivered), lostCallPct: pct(lostCall), lostDelPct: pct(lostDel) };
+  }), [callers, statsOrders]);
+
+  // Phase 7: stale in-transit orders (dispatched > STALE_HOURS ago)
+  const staleOrders = useMemo(() => cOrders.filter(o => o.status === "in_transit" && o.dispatched_at && (Date.now() - new Date(o.dispatched_at).getTime()) > STALE_HOURS * 3600 * 1000), [cOrders]);
+
   // ─── DB ACTIONS ───
   // Best-effort status history (won't block or error the status change if the
   // order_status_events table isn't present yet in a given environment).
   const logStatus = async (orderId, from, to) => {
     if (!to || from === to) return;
     try { await sb.insert("order_status_events", { order_id: orderId, from_status: from || null, to_status: to }); } catch (e) { /* best-effort */ }
+  };
+
+  // Milestone timestamps stamped on status transitions (Phase 7; flag-gated so it
+  // never sends these columns to a prod DB that hasn't run migration 0006 yet).
+  const stampFor = (order, status) => {
+    if (!FEATURE_CALLER) return {};
+    const now = new Date().toISOString();
+    const p = {};
+    if (status === "confirmed" && !order?.confirmed_at) p.confirmed_at = now;
+    if (status === "in_transit" && !order?.dispatched_at) p.dispatched_at = now;
+    if (status === "delivered") p.delivered_at = now;
+    return p;
   };
 
   const doImport = async (e) => {
@@ -988,9 +1045,10 @@ export default function InfinistoresCRM() {
   const doUpdateStatus = async (id, status) => {
     const order = orders.find(o => o.id === id);
     const wasDelivered = order?.status === "delivered";
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
+    const stamp = stampFor(order, status);
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, status, ...stamp } : o));
     try {
-      await sb.update("orders", { id }, { status });
+      await sb.update("orders", { id }, { status, ...stamp });
       logStatus(id, order?.status, status);
       if (order?.agent_id) {
         const inv = inventory.find(i => i.agent_id === order.agent_id && i.product_name === order.product);
@@ -1024,6 +1082,7 @@ export default function InfinistoresCRM() {
     const oldOrder = orders.find(o => o.id === id);
     const wasDelivered = oldOrder?.status === "delivered";
     const nowDelivered = data.status === "delivered";
+    if (data.status) Object.assign(data, stampFor(oldOrder, data.status));
     setOrders(prev => prev.map(o => o.id === id ? { ...o, ...data } : o));
     try {
       await sb.update("orders", { id }, data);
@@ -1063,10 +1122,11 @@ export default function InfinistoresCRM() {
   const doBulkStatus = async (status) => {
     const ids = [...sel];
     const prevStatus = new Map(orders.filter(o => sel.has(o.id)).map(o => [o.id, o.status]));
-    setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, status } : o));
+    const byId = new Map(orders.map(o => [o.id, o]));
+    setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, status, ...stampFor(o, status) } : o));
     setSel(new Set());
     try {
-      await Promise.all(ids.map(id => sb.update("orders", { id }, { status })));
+      await Promise.all(ids.map(id => sb.update("orders", { id }, { status, ...stampFor(byId.get(id), status) })));
       ids.forEach(id => logStatus(id, prevStatus.get(id), status));
     } catch (err) { showToast(err.message); await loadAll(); }
   };
@@ -1085,6 +1145,15 @@ export default function InfinistoresCRM() {
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
     setSel(new Set());
     try { await Promise.all(ids.map(id => sb.update("orders", { id }, { agent_id: agentId, agent_name: a?.name || "" }))); } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  // ─── Phase 7: assign orders to a caller (by their auth user id) ───
+  const doBulkAssignCaller = async (authUid) => {
+    const ids = [...sel];
+    const patch = { assigned_to: authUid || null, assigned_at: authUid ? new Date().toISOString() : null };
+    setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, ...patch } : o));
+    setSel(new Set());
+    try { await Promise.all(ids.map(id => sb.update("orders", { id }, patch))); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doAddAgent = async (data) => {
@@ -1257,6 +1326,11 @@ export default function InfinistoresCRM() {
 
   const getWALink = (o, statusOverride) => waLink(o.whatsapp || o.phone, fillTpl(templates[statusOverride || o.status] || templates.pending || "", o), o.country);
 
+  const copyOrder = async (o) => {
+    try { await navigator.clipboard.writeText(orderClipboard(o, cur)); showToast("Order details copied", "success"); }
+    catch { showToast("Couldn't copy — please try again"); }
+  };
+
   const toggleSel = id => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAll = () => { const all = pagedOrders.map(o => o.id); setSel(all.every(id => sel.has(id)) ? new Set() : new Set(all)); };
 
@@ -1371,6 +1445,13 @@ export default function InfinistoresCRM() {
 
       <StatsStrip />
 
+      {FEATURE_CALLER && staleOrders.length > 0 && <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.warningBg, border: `1.5px solid #fcd9a8` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}><AlertTriangle size={16} style={{ color: T.warning }} /><span style={{ fontWeight: 700, color: T.warning, fontSize: "13px" }}>{staleOrders.length} order{staleOrders.length !== 1 ? "s" : ""} stuck in transit over {STALE_HOURS}h — chase these up</span></div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+          {staleOrders.slice(0, 12).map(o => <button key={o.id} onClick={() => setViewOrder(o)} style={{ fontSize: "12px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "4px 9px", cursor: "pointer", fontFamily: T.f }}>{o.name} · {Math.floor((Date.now() - new Date(o.dispatched_at).getTime()) / 3600000)}h</button>)}
+        </div>
+      </Card>}
+
       <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>
         <div className="cx-searchbar" style={{ maxWidth: "300px", flex: 1, minWidth: "180px" }}>
           <Search size={15} />
@@ -1400,7 +1481,8 @@ export default function InfinistoresCRM() {
         <span style={{ fontWeight: 700, color: T.accent, fontSize: "13px" }}>{sel.size} selected</span>
         {isMobile ? <select onChange={e => { if (e.target.value) doBulkStatus(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Set status…</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
           : STATUSES.map(s => <Btn key={s.value} v="secondary" sz="xs" onClick={() => doBulkStatus(s.value)} title={s.label}>{s.icon} {s.label}</Btn>)}
-        {cAgents.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssign(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign to…</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>}
+        {cAgents.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssign(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign agent…</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>}
+        {FEATURE_CALLER && caps.del && callers.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssignCaller(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign caller…</option>{callers.map(c => <option key={c.id} value={c.auth_user_id}>{c.full_name || c.email}</option>)}</select>}
         {caps.del && <Btn v="danger" sz="xs" onClick={doBulkDelete} style={{ marginLeft: "auto" }}><Trash2 size={13} />Delete {sel.size}</Btn>}
         <Btn v="ghost" sz="xs" onClick={() => setSel(new Set())}>✕</Btn>
       </div>}
@@ -1426,6 +1508,7 @@ export default function InfinistoresCRM() {
             </div>
           </div>
           <div style={{ display: "flex", gap: "6px", marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${T.borderLight}`, justifyContent: "flex-end" }}>
+            {FEATURE_CALLER && <Btn v="secondary" sz="xs" onClick={() => copyOrder(o)}><Copy size={13} />Copy</Btn>}
             <a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} />WhatsApp</Btn></a>
             <Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} />Edit</Btn>
             {caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}
@@ -1460,7 +1543,7 @@ export default function InfinistoresCRM() {
                     <div className="cx-num" style={{ fontWeight: 700, fontSize: "13px" }}>{cur}{(o.price || 0).toLocaleString()}</div>
                     {o.delivery_fee > 0 && <div style={{ fontSize: "10px", color: T.danger, marginTop: "1px" }}>-{cur}{o.delivery_fee.toLocaleString()} fee</div>}
                   </td>
-                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn>{caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}</div></td>
+                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{FEATURE_CALLER && <Btn v="secondary" sz="xs" title="Copy for WhatsApp" onClick={() => copyOrder(o)}><Copy size={13} /></Btn>}<a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn>{caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}</div></td>
                 </tr>)}
               </tbody>
             </table>
@@ -1651,6 +1734,28 @@ export default function InfinistoresCRM() {
       </div>
       <StatsStrip />
 
+      {FEATURE_CALLER && callers.length > 0 && <Card style={{ overflow: "hidden", marginBottom: "14px" }}>
+        <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Caller effectiveness</span><span className="cx-sub" style={{ marginLeft: "8px" }}>of the orders given to each caller, where did they land</span></div>
+        <div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Caller</th><th className="r">Assigned</th><th className="r">Delivered</th><th>Delivery rate</th><th className="r">Lost on call</th><th className="r">Lost at delivery</th><th className="r">In progress</th></tr></thead>
+          <tbody>
+            {callerStats.length === 0 && <tr><td colSpan={7} style={{ padding: "30px", textAlign: "center", color: T.textMuted }}>No callers yet.</td></tr>}
+            {callerStats.map(c => (
+              <tr key={c.id}>
+                <td className="cx-cust"><b>{c.name}</b></td>
+                <td className="r cx-num">{c.assigned}</td>
+                <td className="r cx-num" style={{ fontWeight: 700, color: T.accent }}>{c.delivered}</td>
+                <td><div style={{ display: "flex", alignItems: "center", gap: "8px" }}><div style={{ flex: 1, maxWidth: "90px", background: T.surfaceAlt, borderRadius: "5px", height: "8px", overflow: "hidden" }}><div style={{ width: `${c.rate}%`, height: "100%", background: c.rate >= 60 ? T.accent : c.rate >= 40 ? T.warning : T.danger }} /></div><span className="cx-num" style={{ fontSize: "12px", fontWeight: 700 }}>{c.rate}%</span></div></td>
+                <td className="r cx-num" style={{ color: c.lostCall ? T.danger : T.textMuted }}>{c.lostCall} <span style={{ fontSize: "11px", color: T.textMuted }}>({c.lostCallPct}%)</span></td>
+                <td className="r cx-num" style={{ color: T.textMuted }}>{c.lostDel} <span style={{ fontSize: "11px" }}>({c.lostDelPct}%)</span></td>
+                <td className="r cx-num">{c.open}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+        <div style={{ padding: "8px 16px", fontSize: "11px", color: T.textMuted, borderTop: `1px solid ${T.borderLight}` }}>Lost on call = phone-skill signal (caller-influenced). Lost at delivery = more about the agent/area.</div>
+      </Card>}
+
       {/* signature delivery funnel */}
       <Card className="cx-funnel" style={{ marginBottom: "14px" }}>
         <div className="lead">
@@ -1786,6 +1891,7 @@ export default function InfinistoresCRM() {
             {o.payment_option && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Payment</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.payment_option}</div></div>}
             {o.notes && <div style={{ gridColumn: "1/-1", background: T.warningBg, padding: "10px 12px", borderRadius: T.rs }}><div style={{ fontSize: "10px", color: T.warning, textTransform: "uppercase", fontWeight: 700 }}>Notes</div><div style={{ fontSize: "13px", color: "#92400e" }}>{o.notes}</div></div>}
           </div>
+          {FEATURE_CALLER && <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px", marginBottom: "4px" }}><Btn v="secondary" onClick={() => copyOrder(o)} style={{ width: "100%", justifyContent: "center" }}><Copy size={15} />Copy order for WhatsApp group</Btn></div>}
           <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}><div style={{ fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "6px", textTransform: "uppercase" }}>Send WhatsApp</div><div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>{STATUSES.map(s => <a key={s.value} href={getWALink(o, s.value)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}><Btn v={o.status === s.value ? "whatsapp" : "secondary"} sz="sm" style={{ fontSize: "11px" }}>{s.icon} {s.label}</Btn></a>)}</div></div>
           {orderEvents.length > 0 && <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px", marginTop: "12px" }}>
             <div style={{ fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "8px", textTransform: "uppercase" }}>Status history</div>
@@ -1809,6 +1915,7 @@ export default function InfinistoresCRM() {
           <Inp label="WhatsApp" value={editOrder.whatsapp} onChange={e => setEditOrder(p => ({ ...p, whatsapp: e.target.value }))} />
           <Inp label={country === "ghana" ? "Region" : "State"} value={editOrder.state} onChange={e => setEditOrder(p => ({ ...p, state: e.target.value }))} />
           <div style={{ gridColumn: "1/-1" }}><Inp label="Address" value={editOrder.address} onChange={e => setEditOrder(p => ({ ...p, address: e.target.value }))} /></div>
+          {FEATURE_CALLER && <div style={{ gridColumn: "1/-1" }}><Inp label="Landmark" value={editOrder.landmark || ""} onChange={e => setEditOrder(p => ({ ...p, landmark: e.target.value }))} /></div>}
           <Inp label="Product" value={editOrder.product} onChange={e => setEditOrder(p => ({ ...p, product: e.target.value }))} />
           <Inp label="Pack" value={editOrder.pack_name} onChange={e => setEditOrder(p => ({ ...p, pack_name: e.target.value }))} />
           <Inp label="Qty" type="number" value={editOrder.qty} onChange={e => setEditOrder(p => ({ ...p, qty: +e.target.value || 1 }))} />
