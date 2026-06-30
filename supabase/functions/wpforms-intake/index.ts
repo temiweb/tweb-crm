@@ -35,6 +35,29 @@ function parsePackage(pkg: string): { packName: string; qty: number; price: numb
   };
 }
 
+const svc = { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` };
+const OPEN_STATUSES = "(pending,call_back,postponed,follow_up,confirmed,in_transit)";
+
+// Auto-assign a new order to the active caller with the lightest current load.
+// Returns null if there are no active callers (order stays unassigned → admin queue).
+async function pickCaller(): Promise<string | null> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/staff?role=eq.caller&active=eq.true&select=auth_user_id`, { headers: svc });
+    if (!r.ok) return null;
+    const list = (await r.json()).map((c: { auth_user_id: string }) => c.auth_user_id).filter(Boolean);
+    if (list.length === 0) return null;
+    if (list.length === 1) return list[0];
+    let best = list[0], bestCount = Infinity;
+    for (const uid of list) {
+      const cr = await fetch(`${SUPABASE_URL}/rest/v1/orders?assigned_to=eq.${uid}&status=in.${OPEN_STATUSES}&select=id`,
+        { headers: { ...svc, Prefer: "count=exact", "Range-Unit": "items", "Range": "0-0" } });
+      const cnt = parseInt((cr.headers.get("content-range") || "*/0").split("/")[1] || "0", 10);
+      if (cnt < bestCount) { bestCount = cnt; best = uid; }
+    }
+    return best;
+  } catch { return null; }
+}
+
 function asString(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "object") {
@@ -75,9 +98,14 @@ Deno.serve(async (req) => {
     ? `wpforms:${asString(body.entry_id)}`
     : `wpforms:${cleanPhone(phone)}:${pkgStr}:${name}:${day}`.slice(0, 250);
 
+  // Auto-assign to the lightest-loaded active caller (null = stays unassigned).
+  const assignedTo = await pickCaller();
+
   const row = {
     name,
     phone,
+    assigned_to: assignedTo,
+    assigned_at: assignedTo ? new Date().toISOString() : null,
     whatsapp: asString(body.whatsapp),
     address: asString(body.address).replace(/[\r\n]+/g, ", "),
     state: asString(body.state),
@@ -100,23 +128,30 @@ Deno.serve(async (req) => {
     external_id: externalId,
   };
 
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/orders?on_conflict=external_id`, {
-    method: "POST",
-    headers: {
-      apikey: SERVICE_ROLE,
-      Authorization: `Bearer ${SERVICE_ROLE}`,
-      "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates,return=minimal",
-    },
-    body: JSON.stringify([row]),
-  });
+  const insertHeaders = {
+    apikey: SERVICE_ROLE,
+    Authorization: `Bearer ${SERVICE_ROLE}`,
+    "Content-Type": "application/json",
+    Prefer: "resolution=merge-duplicates,return=minimal",
+  };
+  const insertUrl = `${SUPABASE_URL}/rest/v1/orders?on_conflict=external_id`;
 
+  let r = await fetch(insertUrl, { method: "POST", headers: insertHeaders, body: JSON.stringify([row]) });
+
+  // Safety net: if the caller-workflow columns aren't there yet (migration 0006
+  // not applied), don't drop the order — retry without those fields.
   if (!r.ok) {
     const detail = await r.text();
-    console.error("upsert failed", r.status, detail);
-    return new Response(JSON.stringify({ ok: false, error: detail }), {
-      status: 502, headers: { "content-type": "application/json" },
-    });
+    if (/assigned_to|assigned_at|column/.test(detail)) {
+      const { assigned_to: _a, assigned_at: _b, ...base } = row;
+      r = await fetch(insertUrl, { method: "POST", headers: insertHeaders, body: JSON.stringify([base]) });
+    }
+    if (!r.ok) {
+      console.error("upsert failed", r.status, detail);
+      return new Response(JSON.stringify({ ok: false, error: detail }), {
+        status: 502, headers: { "content-type": "application/json" },
+      });
+    }
   }
 
   return new Response(JSON.stringify({ ok: true }), {
