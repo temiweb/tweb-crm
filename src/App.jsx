@@ -23,8 +23,12 @@ const ACCESS_PIN = "4285"; // Change this to your real PIN
 // SUPABASE CLIENT (lightweight, no SDK needed)
 // ═══════════════════════════════════════════════
 
+// Current user's access token (set after login); data calls use it as the
+// bearer so RLS can scope by user. Falls back to the anon key when logged out.
+let authToken = null;
+
 const sb = {
-  headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" },
+  get headers() { return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${authToken || SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" }; },
   async fetch(url, options = {}) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -86,6 +90,85 @@ const sb = {
     return r.json();
   }
 };
+
+// ═══════════════════════════════════════════════
+// AUTH (Supabase Auth via REST — no SDK)
+// ═══════════════════════════════════════════════
+const AUTH_KEY = "inf-session";
+const auth = {
+  session: null,
+  load() {
+    try { const s = JSON.parse(localStorage.getItem(AUTH_KEY)); if (s?.access_token) { this.session = s; authToken = s.access_token; } } catch (e) {}
+    return this.session;
+  },
+  save(d) {
+    this.session = d ? { access_token: d.access_token, refresh_token: d.refresh_token, expires_at: d.expires_at, user: d.user } : null;
+    authToken = d?.access_token || null;
+    if (d) localStorage.setItem(AUTH_KEY, JSON.stringify(this.session)); else localStorage.removeItem(AUTH_KEY);
+  },
+  async signIn(email, password) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error_description || d.msg || d.error || "Sign in failed");
+    this.save(d);
+    return d;
+  },
+  async refresh() {
+    if (!this.session?.refresh_token) return false;
+    try {
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, { method: "POST", headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: this.session.refresh_token }) });
+      if (!r.ok) { this.save(null); return false; }
+      this.save(await r.json());
+      return true;
+    } catch (e) { return false; }
+  },
+  async ensureFresh() {
+    if (!this.session) return false;
+    const expMs = (this.session.expires_at || 0) * 1000;
+    if (Date.now() > expMs - 60000) return await this.refresh();
+    return true;
+  },
+  async getUser() {
+    if (!authToken) return null;
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${authToken}` } });
+    if (!r.ok) return null;
+    const u = await r.json();
+    if (this.session) { this.session.user = u; localStorage.setItem(AUTH_KEY, JSON.stringify(this.session)); }
+    return u;
+  },
+  async setPassword(password) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { method: "PUT", headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.msg || d.error_description || d.error || "Could not set password");
+    return d;
+  },
+  signOut() { this.save(null); },
+};
+
+// Parse the auth tokens an invite/recovery email drops in the URL hash
+function parseAuthHash() {
+  const h = window.location.hash;
+  if (!h || h.length < 2) return null;
+  const p = new URLSearchParams(h.slice(1));
+  const access_token = p.get("access_token");
+  if (!access_token) return null;
+  return {
+    access_token,
+    refresh_token: p.get("refresh_token"),
+    expires_at: p.get("expires_at") ? +p.get("expires_at") : Math.floor(Date.now() / 1000) + (+(p.get("expires_in") || 3600)),
+    type: p.get("type"),
+  };
+}
+
+// Role → capability map (drives UI gating; RLS enforces the same server-side)
+const CAPS = {
+  admin:      { orders: "edit", del: true, inventory: "edit", agents: "edit", analytics: true, staff: true, settings: true },
+  manager:    { orders: "edit", del: true, inventory: "edit", agents: "edit", analytics: true, staff: false, settings: true },
+  accountant: { orders: "view", del: false, inventory: "view", agents: "view", analytics: true, staff: false, settings: false },
+  caller:     { orders: "edit", del: false, inventory: "view", agents: "view", analytics: false, staff: false, settings: false },
+  viewer:     { orders: "view", del: false, inventory: "view", agents: "view", analytics: false, staff: false, settings: false },
+};
+const capsFor = role => CAPS[role] || CAPS.viewer;
 
 // ═══════════════════════════════════════════════
 // STATUS MODEL — grouped reason-code clusters (visual)
@@ -160,6 +243,41 @@ function waLink(phone, msg, country) {
   if (country === "ghana") { if (p.startsWith("0")) p = "233" + p.slice(1); }
   else { if (p.startsWith("0")) p = "234" + p.slice(1); }
   return `https://wa.me/${p}?text=${encodeURIComponent(msg)}`;
+}
+
+// ─── Delivery-date helpers ───
+// Parse "MM/DD/YYYY", "YYYY-MM-DD", or anything Date can read → Date | null
+function parseDateStr(s) {
+  if (!s) return null;
+  const mdy = String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) return new Date(+mdy[3], +mdy[1] - 1, +mdy[2]);
+  const iso = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3]);
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+// Concrete delivery date for an order: explicit date wins; otherwise derive
+// from the "Today"/"Tomorrow" preference relative to when it was ordered.
+function deliveryDateOf(o) {
+  const explicit = parseDateStr(o.delivery_date);
+  if (explicit) return explicit;
+  const pref = (o.delivery_pref || "").toLowerCase();
+  const base = o.created_at ? new Date(o.created_at) : new Date();
+  if (pref.includes("today")) return new Date(base.getFullYear(), base.getMonth(), base.getDate());
+  if (pref.includes("tomorrow")) { const d = new Date(base.getFullYear(), base.getMonth(), base.getDate()); d.setDate(d.getDate() + 1); return d; }
+  return null;
+}
+function toISODate(d) {
+  if (!d) return "";
+  const x = d instanceof Date ? d : parseDateStr(d);
+  if (!x || isNaN(x)) return "";
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+}
+function fmtDate(d) {
+  if (!d) return "";
+  const x = d instanceof Date ? d : parseDateStr(d);
+  if (!x || isNaN(x)) return "";
+  return x.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
 function fillTpl(tpl, o) {
@@ -486,34 +604,71 @@ const FONTS = "https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,
 // PIN SCREEN
 // ═══════════════════════════════════════════════
 
-function PinScreen({ onUnlock }) {
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState(false);
-  const handleSubmit = () => {
-    if (pin === ACCESS_PIN) {
-      sessionStorage.setItem("tweb-auth-ts", Date.now().toString());
-      onUnlock();
-    } else {
-      setError(true);
-      setPin("");
-    }
+function SetPasswordScreen({ onDone }) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (pw.length < 6) { setError("Password must be at least 6 characters."); return; }
+    if (pw !== pw2) { setError("Passwords don't match."); return; }
+    setBusy(true); setError("");
+    try { await auth.setPassword(pw); await onDone(); }
+    catch (e) { setError(e.message); setBusy(false); }
   };
+  const inp = { width: "100%", padding: "12px 13px", border: `1.5px solid ${T.border}`, borderRadius: "10px", fontSize: "14px", outline: "none", fontFamily: T.f, boxSizing: "border-box", marginBottom: "10px", background: "#fff", color: T.text };
   return (
     <div className="cx-app" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: T.bg }}>
       <link href={FONTS} rel="stylesheet" />
       <style>{CSS}</style>
-      <div style={{ background: "#fff", borderRadius: "18px", padding: "36px 32px", width: "340px", textAlign: "center", boxShadow: T.shl }}>
-        <div style={{ width: "52px", height: "52px", background: `linear-gradient(135deg,${T.accent},${T.accentDark})`, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px", color: "#fff" }}><Store size={26} /></div>
-        <div style={{ fontFamily: T.fd, fontWeight: 800, fontSize: "22px", color: T.text, marginBottom: "6px" }}>Infinistores</div>
-        <div style={{ color: T.textMuted, fontSize: "13px", marginBottom: "24px" }}>Enter your PIN to continue</div>
-        <input type="password" inputMode="numeric" maxLength={6} value={pin} onChange={e => { setPin(e.target.value); setError(false); }}
-          onKeyDown={e => e.key === "Enter" && handleSubmit()}
-          placeholder="••••"
-          style={{ width: "100%", padding: "13px", border: `2px solid ${error ? T.danger : T.border}`, borderRadius: "12px", fontSize: "22px", textAlign: "center", letterSpacing: "10px", outline: "none", fontFamily: T.fd, boxSizing: "border-box", marginBottom: "8px", transition: "border-color .15s" }} />
-        {error && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "10px", fontWeight: 700 }}>Incorrect PIN — try again</div>}
-        {!error && <div style={{ marginBottom: "10px" }} />}
-        <button onClick={handleSubmit}
-          style={{ width: "100%", padding: "13px", background: `linear-gradient(135deg,${T.accent},${T.accentDark})`, color: "#fff", border: "none", borderRadius: "12px", fontSize: "14px", fontWeight: 700, cursor: "pointer", fontFamily: T.f }}>Unlock</button>
+      <div style={{ background: "#fff", borderRadius: "18px", padding: "36px 32px", width: "360px", boxShadow: T.shl }}>
+        <div style={{ textAlign: "center", marginBottom: "22px" }}>
+          <div style={{ width: "52px", height: "52px", background: `linear-gradient(135deg,${T.accent},${T.accentDark})`, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px", color: "#fff" }}><Store size={26} /></div>
+          <div style={{ fontFamily: T.fd, fontWeight: 800, fontSize: "22px", color: T.text, marginBottom: "6px" }}>Welcome to Infinistores</div>
+          <div style={{ color: T.textMuted, fontSize: "13px" }}>Set a password to finish setting up your account</div>
+        </div>
+        <input type="password" autoComplete="new-password" placeholder="New password" value={pw} onChange={e => { setPw(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={inp} />
+        <input type="password" autoComplete="new-password" placeholder="Confirm password" value={pw2} onChange={e => { setPw2(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={inp} />
+        {error && <div style={{ color: T.danger, fontSize: "12px", margin: "2px 0 10px", fontWeight: 700 }}>{error}</div>}
+        <button onClick={submit} disabled={busy}
+          style={{ width: "100%", padding: "13px", background: busy ? T.textLight : `linear-gradient(135deg,${T.accent},${T.accentDark})`, color: "#fff", border: "none", borderRadius: "12px", fontSize: "14px", fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: T.f, marginTop: "4px" }}>{busy ? "Saving…" : "Set password & continue"}</button>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!email || !password) { setError("Enter your email and password."); return; }
+    setBusy(true); setError("");
+    try {
+      await auth.signIn(email.trim(), password);
+      await onLogin();
+    } catch (e) {
+      setError(e.message === "Invalid login credentials" ? "Wrong email or password." : e.message);
+      setBusy(false);
+    }
+  };
+  const inp = { width: "100%", padding: "12px 13px", border: `1.5px solid ${T.border}`, borderRadius: "10px", fontSize: "14px", outline: "none", fontFamily: T.f, boxSizing: "border-box", marginBottom: "10px", background: "#fff", color: T.text };
+  return (
+    <div className="cx-app" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: T.bg }}>
+      <link href={FONTS} rel="stylesheet" />
+      <style>{CSS}</style>
+      <div style={{ background: "#fff", borderRadius: "18px", padding: "36px 32px", width: "360px", boxShadow: T.shl }}>
+        <div style={{ textAlign: "center", marginBottom: "22px" }}>
+          <div style={{ width: "52px", height: "52px", background: `linear-gradient(135deg,${T.accent},${T.accentDark})`, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px", color: "#fff" }}><Store size={26} /></div>
+          <div style={{ fontFamily: T.fd, fontWeight: 800, fontSize: "22px", color: T.text, marginBottom: "6px" }}>Infinistores</div>
+          <div style={{ color: T.textMuted, fontSize: "13px" }}>Sign in to continue</div>
+        </div>
+        <input type="email" autoComplete="username" placeholder="Email" value={email} onChange={e => { setEmail(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={inp} />
+        <input type="password" autoComplete="current-password" placeholder="Password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={inp} />
+        {error && <div style={{ color: T.danger, fontSize: "12px", margin: "2px 0 10px", fontWeight: 700 }}>{error}</div>}
+        <button onClick={submit} disabled={busy}
+          style={{ width: "100%", padding: "13px", background: busy ? T.textLight : `linear-gradient(135deg,${T.accent},${T.accentDark})`, color: "#fff", border: "none", borderRadius: "12px", fontSize: "14px", fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: T.f, marginTop: "4px" }}>{busy ? "Signing in…" : "Sign in"}</button>
       </div>
     </div>
   );
@@ -524,13 +679,11 @@ function PinScreen({ onUnlock }) {
 // ═══════════════════════════════════════════════
 
 export default function InfinistoresCRM() {
-  const [authed, setAuthed] = useState(() => {
-    const ts = sessionStorage.getItem("tweb-auth-ts");
-    if (!ts) return false;
-    const hoursElapsed = (Date.now() - parseInt(ts)) / (1000 * 60 * 60);
-    if (hoursElapsed > 8) { sessionStorage.removeItem("tweb-auth-ts"); return false; }
-    return true;
-  });
+  const [authed, setAuthed] = useState(false);
+  const [me, setMe] = useState(null);            // current staff row { role, full_name, ... }
+  const [authChecking, setAuthChecking] = useState(true);
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const caps = capsFor(me?.role);
   const [orders, setOrders] = useState([]);
   const [agents, setAgents] = useState([]);
   const [products, setProducts] = useState([]);
@@ -539,6 +692,7 @@ export default function InfinistoresCRM() {
   const [purchases, setPurchases] = useState([]);
   const [faulty, setFaulty] = useState([]);
   const [transfers, setTransfers] = useState([]);
+  const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -584,6 +738,7 @@ export default function InfinistoresCRM() {
   const [showAddPurchase, setShowAddPurchase] = useState(false);
   const [showAddFaulty, setShowAddFaulty] = useState(false);
   const [showAddTransfer, setShowAddTransfer] = useState(false);
+  const [showAddStaff, setShowAddStaff] = useState(false);
   const [showAddOrder, setShowAddOrder] = useState(false);
   const [importCountry, setImportCountry] = useState("auto");
 
@@ -594,6 +749,7 @@ export default function InfinistoresCRM() {
   // ─── LOAD ALL DATA ───
   const loadAll = async (retries = 3) => {
     try {
+      await auth.ensureFresh();
       const [o, a, p, inv, t] = await Promise.all([
         sb.queryAll("orders", "order=created_at.desc"),
         sb.query("agents", "order=created_at.asc"),
@@ -618,6 +774,7 @@ export default function InfinistoresCRM() {
         ]);
         setWaybills(wb || []); setPurchases(pu || []); setFaulty(fa || []); setTransfers(tr || []);
       } catch { /* inventory tables not present yet */ }
+      try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
     } catch (e) {
       if (!loaded) {
         if (retries > 1) {
@@ -631,10 +788,55 @@ export default function InfinistoresCRM() {
       }
     }
   };
-  useEffect(() => { loadAll(); }, []);
+  // ─── AUTH: current staff + session restore ───
+  const loadMe = async () => {
+    let uid = auth.session?.user?.id;
+    if (!uid) { const u = await auth.getUser(); uid = u?.id; }
+    if (!uid) return null;
+    try { const [s] = await sb.query("staff", `auth_user_id=eq.${uid}&select=*`); setMe(s || null); return s || null; }
+    catch (e) { return null; }
+  };
 
-  // Auto-refresh every 30s for multi-device sync
-  useEffect(() => { const i = setInterval(loadAll, 30000); return () => clearInterval(i); }, []);
+  const onPasswordSet = async () => {
+    const s = await loadMe();
+    if (!s || !s.active) { auth.signOut(); setNeedsPassword(false); throw new Error("No active staff profile for this account."); }
+    setNeedsPassword(false); setAuthed(true);
+    await loadAll();
+  };
+
+  const onLogin = async () => {
+    const s = await loadMe();
+    if (!s) { auth.signOut(); throw new Error("No staff profile for this account — contact your admin."); }
+    if (!s.active) { auth.signOut(); setMe(null); throw new Error("Your account is inactive."); }
+    setAuthed(true);
+    await loadAll();
+  };
+
+  const doSignOut = () => { auth.signOut(); setAuthed(false); setMe(null); setLoaded(false); };
+
+  useEffect(() => {
+    (async () => {
+      // Coming back from an invite / password-recovery email?
+      const hash = parseAuthHash();
+      if (hash && (hash.type === "invite" || hash.type === "recovery")) {
+        auth.save(hash);
+        window.history.replaceState(null, "", window.location.pathname);
+        setNeedsPassword(true);
+        setAuthChecking(false);
+        return;
+      }
+      auth.load();
+      if (auth.session) {
+        const ok = await auth.ensureFresh();
+        if (ok) { const s = await loadMe(); if (s && s.active) { setAuthed(true); await loadAll(); } else auth.signOut(); }
+        else auth.signOut();
+      }
+      setAuthChecking(false);
+    })();
+  }, []);
+
+  // Auto-refresh every 30s for multi-device sync (only while signed in)
+  useEffect(() => { if (!authed) return; const i = setInterval(loadAll, 30000); return () => clearInterval(i); }, [authed]);
 
   // Load status history when an order detail is opened (best-effort)
   useEffect(() => {
@@ -1017,6 +1219,32 @@ export default function InfinistoresCRM() {
     setShowAddTransfer(false);
   };
 
+  const doInviteStaff = async (data) => {
+    try {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/invite-staff`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify(data),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Invite failed");
+      setStaff(prev => [...prev, d.staff]);
+      showToast(`Invite sent to ${data.email}`, "success");
+    } catch (e) { showToast(e.message); }
+    setShowAddStaff(false);
+  };
+
+  const doUpdateStaff = async (id, patch) => {
+    setStaff(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s));
+    try { await sb.update("staff", { id }, patch); } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  const doDeleteStaff = async (id) => {
+    if (!window.confirm("Remove this staff member? They will lose access.")) return;
+    setStaff(prev => prev.filter(s => s.id !== id));
+    try { await sb.delete("staff", { id }); } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
   const doSaveTemplate = async (key, msg) => {
     setTemplates(prev => ({ ...prev, [key]: msg }));
     try { await sb.upsert("templates", { status_key: key, message: msg }); } catch (err) { showToast(err.message); }
@@ -1034,7 +1262,18 @@ export default function InfinistoresCRM() {
 
   // ─── SCREENS ───
 
-  if (!authed) return <PinScreen onUnlock={() => setAuthed(true)} />;
+  if (authChecking) return (
+    <div className="cx-app" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: T.bg }}>
+      <link href={FONTS} rel="stylesheet" />
+      <style>{CSS}</style>
+      <div style={{ width: "48px", height: "48px", background: `linear-gradient(135deg,${T.accent},${T.accentDark})`, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", animation: "pulse 1.5s infinite" }}><Store size={24} /></div>
+      <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.7;transform:scale(0.96)}}`}</style>
+    </div>
+  );
+
+  if (needsPassword) return <SetPasswordScreen onDone={onPasswordSet} />;
+
+  if (!authed) return <LoginScreen onLogin={onLogin} />;
 
   if (!loaded) return (
     <div className="cx-app" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: T.bg }}>
@@ -1069,10 +1308,11 @@ export default function InfinistoresCRM() {
       { id: "inventory", label: "Inventory", icon: Boxes },
     ] },
     { sec: "Insights", items: [
-      { id: "analytics", label: "Analytics", icon: LayoutDashboard },
-      { id: "templates", label: "Messages", icon: MessageSquare },
+      ...(caps.analytics ? [{ id: "analytics", label: "Analytics", icon: LayoutDashboard }] : []),
+      ...(caps.settings ? [{ id: "templates", label: "Messages", icon: MessageSquare }] : []),
     ] },
-  ];
+    ...(caps.staff ? [{ sec: "People", items: [{ id: "staff", label: "Staff", icon: Users }] }] : []),
+  ].filter(g => g.items.length);
   const navFlat = NAV.flatMap(g => g.items);
   const activeMeta = navFlat.find(n => n.id === tab) || navFlat[0];
 
@@ -1101,9 +1341,12 @@ export default function InfinistoresCRM() {
     { l: "Units sold", v: stats.unitsSold, d: `of ${stats.totalUnitsOrdered}`, dir: "flat", accent: "#7c3aed", icon: Package },
     { l: "Pending", v: stats.pending, accent: "#b45309", icon: Clock },
     { l: "Failed", v: stats.failed, accent: "#b91c1c", icon: X },
-    { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, accent: "#1d4ed8", icon: Wallet },
-    { l: "Fees", v: `${cur}${stats.fees.toLocaleString()}`, accent: "#ea580c", icon: Truck },
-    { l: "Net", v: `${cur}${stats.net.toLocaleString()}`, accent: "#1a7a4c", icon: TrendingUp },
+    // financial cards — only for roles with analytics/finance access
+    ...(caps.analytics ? [
+      { l: "Revenue", v: `${cur}${stats.rev.toLocaleString()}`, accent: "#1d4ed8", icon: Wallet },
+      { l: "Fees", v: `${cur}${stats.fees.toLocaleString()}`, accent: "#ea580c", icon: Truck },
+      { l: "Net", v: `${cur}${stats.net.toLocaleString()}`, accent: "#1a7a4c", icon: TrendingUp },
+    ] : []),
   ];
 
   const StatsStrip = () => (
@@ -1121,8 +1364,8 @@ export default function InfinistoresCRM() {
       <div className="cx-head">
         <div><h1 className="cx-h1">Orders</h1><div className="cx-sub">Confirm, assign and track every order</div></div>
         <div style={{ display: "flex", gap: "8px" }}>
-          <Btn v="secondary" onClick={() => setShowImport(true)}><Upload size={15} />Import CSV</Btn>
-          <Btn onClick={() => setShowAddOrder(true)}><Plus size={16} />New order</Btn>
+          {caps.del && <Btn v="secondary" onClick={() => setShowImport(true)}><Upload size={15} />Import CSV</Btn>}
+          {caps.del && <Btn onClick={() => setShowAddOrder(true)}><Plus size={16} />New order</Btn>}
         </div>
       </div>
 
@@ -1158,7 +1401,7 @@ export default function InfinistoresCRM() {
         {isMobile ? <select onChange={e => { if (e.target.value) doBulkStatus(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Set status…</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
           : STATUSES.map(s => <Btn key={s.value} v="secondary" sz="xs" onClick={() => doBulkStatus(s.value)} title={s.label}>{s.icon} {s.label}</Btn>)}
         {cAgents.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssign(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign to…</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>}
-        <Btn v="danger" sz="xs" onClick={doBulkDelete} style={{ marginLeft: "auto" }}><Trash2 size={13} />Delete {sel.size}</Btn>
+        {caps.del && <Btn v="danger" sz="xs" onClick={doBulkDelete} style={{ marginLeft: "auto" }}><Trash2 size={13} />Delete {sel.size}</Btn>}
         <Btn v="ghost" sz="xs" onClick={() => setSel(new Set())}>✕</Btn>
       </div>}
 
@@ -1185,7 +1428,7 @@ export default function InfinistoresCRM() {
           <div style={{ display: "flex", gap: "6px", marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${T.borderLight}`, justifyContent: "flex-end" }}>
             <a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} />WhatsApp</Btn></a>
             <Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} />Edit</Btn>
-            <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>
+            {caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}
           </div>
         </Card>)}
         <Pagination page={ordersPage} total={filtered.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
@@ -1217,7 +1460,7 @@ export default function InfinistoresCRM() {
                     <div className="cx-num" style={{ fontWeight: 700, fontSize: "13px" }}>{cur}{(o.price || 0).toLocaleString()}</div>
                     {o.delivery_fee > 0 && <div style={{ fontSize: "10px", color: T.danger, marginTop: "1px" }}>-{cur}{o.delivery_fee.toLocaleString()} fee</div>}
                   </td>
-                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn></div></td>
+                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn>{caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}</div></td>
                 </tr>)}
               </tbody>
             </table>
@@ -1236,7 +1479,7 @@ export default function InfinistoresCRM() {
     <div>
       <div className="cx-head">
         <div><h1 className="cx-h1">Agents</h1><div className="cx-sub">Delivery agents and their performance</div></div>
-        <Btn onClick={() => setShowAddAgent(true)}><Plus size={16} />Add agent</Btn>
+        {caps.agents === "edit" && <Btn onClick={() => setShowAddAgent(true)}><Plus size={16} />Add agent</Btn>}
       </div>
       {cAgents.length > 0 && <div className="cx-grid cx-kpis" style={{ marginBottom: "16px" }}>
         <KPI accent="#1a7a4c" v={agentTotals.assigned} l="Total assigned" icon={ClipboardList} />
@@ -1268,8 +1511,8 @@ export default function InfinistoresCRM() {
               ))}
             </div>
             <div style={{ display: "flex", gap: "6px" }}>
-              <Btn v="secondary" sz="sm" onClick={() => setShowStock(a.id)} style={{ flex: 1, justifyContent: "center" }}><Boxes size={14} />Manage stock</Btn>
-              <Btn v="ghost" sz="sm" onClick={() => doDeleteAgent(a.id)} style={{ color: T.danger }}><Trash2 size={14} /></Btn>
+              <Btn v="secondary" sz="sm" onClick={() => setShowStock(a.id)} style={{ flex: 1, justifyContent: "center" }}><Boxes size={14} />{caps.inventory === "edit" ? "Manage stock" : "View stock"}</Btn>
+              {caps.agents === "edit" && <Btn v="ghost" sz="sm" onClick={() => doDeleteAgent(a.id)} style={{ color: T.danger }}><Trash2 size={14} /></Btn>}
             </div>
           </Card>
         ); })}
@@ -1300,7 +1543,7 @@ export default function InfinistoresCRM() {
     <div>
       <div className="cx-head">
         <div><h1 className="cx-h1">Inventory &amp; stock</h1><div className="cx-sub">Warehouse and field stock in one place</div></div>
-        {invHeaderBtn}
+        {caps.inventory === "edit" && invHeaderBtn}
       </div>
       <div className="cx-tabs">{invSubs.map(s => <button key={s.id} className={`cx-tab ${invTab === s.id ? "on" : ""}`} onClick={() => setInvTab(s.id)}>{s.label}</button>)}</div>
 
@@ -1310,7 +1553,7 @@ export default function InfinistoresCRM() {
           <tbody>{products.map(p => { const wa = withAgents(p.name); const wh = p.warehouse_qty || 0; return (
             <tr key={p.id}>
               <td><b style={{ fontWeight: 600 }}>{p.name}</b></td>
-              <td className="r"><input type="number" defaultValue={wh} key={wh} onBlur={e => { const v = Math.max(0, +e.target.value || 0); if (v !== wh) doSetWarehouseQty(p, v); }} style={{ width: "72px", textAlign: "right", padding: "5px 8px", border: `1.5px solid ${T.border}`, borderRadius: "6px", fontFamily: T.fd, fontWeight: 700 }} /></td>
+              <td className="r">{caps.inventory === "edit" ? <input type="number" defaultValue={wh} key={wh} onBlur={e => { const v = Math.max(0, +e.target.value || 0); if (v !== wh) doSetWarehouseQty(p, v); }} style={{ width: "72px", textAlign: "right", padding: "5px 8px", border: `1.5px solid ${T.border}`, borderRadius: "6px", fontFamily: T.fd, fontWeight: 700 }} /> : <span className="cx-num" style={{ fontWeight: 700 }}>{wh}</span>}</td>
               <td className="r cx-num" style={{ color: wa ? T.accent : T.textLight }}>{wa}</td>
               <td className="r cx-num" style={{ fontWeight: 800 }}>{wh + wa}</td>
             </tr>
@@ -1472,7 +1715,42 @@ export default function InfinistoresCRM() {
     </div>
   );
 
-  const screen = { orders: OrdersScreen, agents: AgentsScreen, inventory: InventoryScreen, analytics: AnalyticsScreen, templates: TemplatesScreen }[tab] || OrdersScreen;
+  const ROLE_OPTS = [
+    { v: "admin", l: "Admin" }, { v: "manager", l: "Manager" }, { v: "accountant", l: "Accountant" }, { v: "caller", l: "Caller" }, { v: "viewer", l: "Viewer" },
+  ];
+  const StaffScreen = (
+    <div>
+      <div className="cx-head">
+        <div><h1 className="cx-h1">Staff</h1><div className="cx-sub">Invite people and set what they can access</div></div>
+        <Btn onClick={() => setShowAddStaff(true)}><Plus size={16} />Add staff</Btn>
+      </div>
+      <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th className="r">Actions</th></tr></thead>
+        <tbody>
+          {staff.length === 0 && <tr><td colSpan={5} style={{ padding: "40px", textAlign: "center", color: T.textMuted }}>No staff yet.</td></tr>}
+          {staff.map(s => { const isSelf = s.auth_user_id === me?.auth_user_id; return (
+            <tr key={s.id}>
+              <td className="cx-cust"><b>{s.full_name || "—"}</b>{isSelf && <span style={{ fontSize: "10px", color: T.accent, fontWeight: 700, marginLeft: "6px" }}>YOU</span>}</td>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{s.email}</td>
+              <td>
+                <select value={s.role} disabled={isSelf} onChange={e => doUpdateStaff(s.id, { role: e.target.value })} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1.5px solid ${T.border}`, fontSize: "12px", background: isSelf ? T.surfaceAlt : T.surface, fontFamily: T.f, cursor: isSelf ? "default" : "pointer" }}>
+                  {ROLE_OPTS.map(r => <option key={r.v} value={r.v}>{r.l}</option>)}
+                </select>
+              </td>
+              <td><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: s.active ? T.accentLight : T.dangerBg, color: s.active ? T.accent : T.danger }}>{s.active ? "Active" : "Inactive"}</span></td>
+              <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
+                {!isSelf && <Btn v="secondary" sz="xs" onClick={() => doUpdateStaff(s.id, { active: !s.active })}>{s.active ? "Deactivate" : "Activate"}</Btn>}
+                {!isSelf && <Btn v="ghost" sz="xs" onClick={() => doDeleteStaff(s.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}
+              </div></td>
+            </tr>
+          ); })}
+        </tbody>
+      </table></div></Card>
+      <div style={{ fontSize: "12px", color: T.textMuted, marginTop: "10px" }}>Invited staff receive an email to set their own password. Roles take effect on their next sign-in.</div>
+    </div>
+  );
+
+  const screen = { orders: OrdersScreen, agents: AgentsScreen, inventory: InventoryScreen, analytics: AnalyticsScreen, templates: TemplatesScreen, staff: caps.staff ? StaffScreen : OrdersScreen }[tab] || OrdersScreen;
 
   const CountrySeg = ({ inRail }) => (
     <div className="cx-seg2" style={inRail ? { background: "rgba(255,255,255,0.07)", border: "none" } : {}}>
@@ -1504,7 +1782,7 @@ export default function InfinistoresCRM() {
             <div style={{ gridColumn: "1/-1" }}><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Address</div><div style={{ fontSize: "13px" }}>{o.address}</div></div>
             <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Product</div><div style={{ fontWeight: 700 }}>{o.product} — {o.pack_name} (×{o.qty})</div></div>
             <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Price</div><div className="cx-num" style={{ fontWeight: 800, fontSize: "16px" }}>{cur}{(o.price || 0).toLocaleString()}</div></div>
-            {(o.delivery_pref || o.delivery_date) && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Delivery timing</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{[o.delivery_pref, o.delivery_date].filter(Boolean).join(" · ")}</div></div>}
+            {(deliveryDateOf(o) || o.delivery_pref) && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Delivery date</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{fmtDate(deliveryDateOf(o)) || o.delivery_pref}</div></div>}
             {o.payment_option && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Payment</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.payment_option}</div></div>}
             {o.notes && <div style={{ gridColumn: "1/-1", background: T.warningBg, padding: "10px 12px", borderRadius: T.rs }}><div style={{ fontSize: "10px", color: T.warning, textTransform: "uppercase", fontWeight: 700 }}>Notes</div><div style={{ fontSize: "13px", color: "#92400e" }}>{o.notes}</div></div>}
           </div>
@@ -1546,8 +1824,7 @@ export default function InfinistoresCRM() {
           </div>
           <div style={{ marginBottom: "10px" }}><label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase" }}>Status</label>
             <select value={editOrder.status} onChange={e => setEditOrder(p => ({ ...p, status: e.target.value }))} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt }}>{GROUPS.map(g => <optgroup key={g.id} label={g.label}>{STATUSES.filter(s => s.group === g.id).map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</optgroup>)}</select></div>
-          <Inp label="Delivery preference" value={editOrder.delivery_pref || ""} onChange={e => setEditOrder(p => ({ ...p, delivery_pref: e.target.value }))} />
-          <Inp label="Delivery date" value={editOrder.delivery_date || ""} onChange={e => setEditOrder(p => ({ ...p, delivery_date: e.target.value }))} />
+          <Inp label="Delivery date" type="date" value={toISODate(editOrder.delivery_date) || toISODate(deliveryDateOf(editOrder))} onChange={e => setEditOrder(p => ({ ...p, delivery_date: e.target.value }))} />
           <div style={{ gridColumn: "1/-1" }}><Inp label="Payment option" value={editOrder.payment_option || ""} onChange={e => setEditOrder(p => ({ ...p, payment_option: e.target.value }))} /></div>
           <div style={{ gridColumn: "1/-1" }}><Inp label="Notes" value={editOrder.notes} onChange={e => setEditOrder(p => ({ ...p, notes: e.target.value }))} /></div>
           <div style={{ gridColumn: "1/-1", display: "flex", gap: "8px" }}><Btn onClick={() => doSaveOrder(editOrder)} style={{ flex: 1, justifyContent: "center" }}>Save</Btn><Btn v="secondary" onClick={() => setEditOrder(null)}>Cancel</Btn></div>
@@ -1573,7 +1850,7 @@ export default function InfinistoresCRM() {
       </Modal>
 
       <Modal open={!!showStock} onClose={() => setShowStock(null)} title={`Stock — ${agents.find(a => a.id === showStock)?.name || ""}`}>
-        {showStock && <StockMgr agentId={showStock} products={products} inventory={inventory} onUpdate={doUpdateStock} />}
+        {showStock && <StockMgr agentId={showStock} products={products} inventory={inventory} onUpdate={doUpdateStock} canEdit={caps.inventory === "edit"} />}
       </Modal>
 
       <Modal open={showAddWaybill} onClose={() => setShowAddWaybill(false)} title="New waybill">
@@ -1590,6 +1867,10 @@ export default function InfinistoresCRM() {
 
       <Modal open={showAddTransfer} onClose={() => setShowAddTransfer(false)} title="Transfer stock between agents">
         <TransferForm products={products} agents={cAgents} onSubmit={doAddTransfer} />
+      </Modal>
+
+      <Modal open={showAddStaff} onClose={() => setShowAddStaff(false)} title="Invite staff member">
+        <StaffForm onSubmit={doInviteStaff} />
       </Modal>
     </>
   );
@@ -1609,7 +1890,7 @@ export default function InfinistoresCRM() {
             {saving && <span style={{ fontSize: "11px", fontWeight: 700, color: "#86efac" }}>Saving…</span>}
             {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ fontSize: "11px", fontWeight: 700, color: "#fca5a5" }}>⚠ Offline</span>}
             <CountrySeg inRail />
-            <button onClick={() => { sessionStorage.removeItem("tweb-auth-ts"); setAuthed(false); }} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "rgba(255,255,255,0.7)", borderRadius: "8px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center" }}><LogOut size={15} /></button>
+            <button onClick={doSignOut} title={`Sign out${me ? " — " + me.full_name : ""}`} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "rgba(255,255,255,0.7)", borderRadius: "8px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center" }}><LogOut size={15} /></button>
           </div>
         </div>
         <div className="cx-content" style={{ padding: "16px 14px 24px" }}>{screen}</div>
@@ -1671,7 +1952,13 @@ export default function InfinistoresCRM() {
             {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ color: T.danger, fontSize: "12px", fontWeight: 700, background: T.dangerBg, padding: "5px 11px", borderRadius: "8px", cursor: "pointer" }}>⚠ Offline</span>}
             <CountrySeg />
             <button className="cx-iconbtn" onClick={() => { setSyncError(false); loadAll(); }} title="Refresh"><RefreshCw size={16} /></button>
-            <button className="cx-iconbtn" onClick={() => { sessionStorage.removeItem("tweb-auth-ts"); setAuthed(false); }} title="Lock"><LogOut size={16} /></button>
+            {me && <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "0 4px 0 8px", borderLeft: `1px solid ${T.border}` }}>
+              <div style={{ textAlign: "right", lineHeight: 1.15 }}>
+                <div style={{ fontSize: "12.5px", fontWeight: 700, color: T.text }}>{me.full_name || me.email}</div>
+                <div style={{ fontSize: "10px", color: T.textMuted, textTransform: "capitalize" }}>{me.role}</div>
+              </div>
+              <button className="cx-iconbtn" onClick={doSignOut} title="Sign out"><LogOut size={16} /></button>
+            </div>}
           </header>
           <div className="cx-content">{screen}</div>
         </div>
@@ -1733,6 +2020,38 @@ function PurchaseForm({ products, cur, onSubmit }) {
     <Inp label="Note — optional" value={note} onChange={e => setNote(e.target.value)} />
     {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
     <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, quantity: qty, unit_cost: cost === "" ? null : +cost, note }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Record purchase</Btn>
+  </div>;
+}
+
+function StaffForm({ onSubmit }) {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("caller");
+  const [phone, setPhone] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!fullName.trim()) return setErr("Name is required.");
+    if (!email.trim()) return setErr("Email is required.");
+    setErr(""); setBusy(true);
+    await onSubmit({ full_name: fullName.trim(), email: email.trim(), role, phone: phone.trim() });
+    setBusy(false);
+  };
+  return <div>
+    <Inp label="Full name" value={fullName} onChange={e => setFullName(e.target.value)} />
+    <Inp label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} />
+    <Inp label="Phone" value={phone} onChange={e => setPhone(e.target.value)} />
+    <label style={fLbl}>Role</label>
+    <select value={role} onChange={e => setRole(e.target.value)} style={fSel}>
+      <option value="admin">Admin — full access</option>
+      <option value="manager">Manager — everything except staff</option>
+      <option value="accountant">Accountant — view + analytics</option>
+      <option value="caller">Caller — confirm orders</option>
+      <option value="viewer">Viewer — read only</option>
+    </select>
+    {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
+    <Btn onClick={submit} disabled={busy} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{busy ? "Sending invite…" : "Send invite"}</Btn>
+    <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "10px", textAlign: "center" }}>They'll get an email to set their own password.</div>
   </div>;
 }
 
@@ -1802,10 +2121,16 @@ function OrderForm({ onSubmit, country, cur }) {
   </div>;
 }
 
-function StockItem({ agentId, product, qty, onUpdate }) {
+function StockItem({ agentId, product, qty, onUpdate, canEdit }) {
   const [local, setLocal] = useState(qty);
   useEffect(() => { setLocal(qty); }, [qty]);
   const commit = (val) => { const n = Math.max(0, val); setLocal(n); onUpdate(agentId, product, n); };
+  if (!canEdit) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: T.surfaceAlt, borderRadius: T.rs }}>
+      <div style={{ fontWeight: 700, fontSize: "13px" }}>{product}</div>
+      <div className="cx-num" style={{ fontWeight: 800, fontSize: "16px" }}>{qty}</div>
+    </div>
+  );
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: T.surfaceAlt, borderRadius: T.rs, flexWrap: "wrap", gap: "6px" }}>
       <div style={{ fontWeight: 700, fontSize: "13px" }}>{product}</div>
@@ -1818,11 +2143,11 @@ function StockItem({ agentId, product, qty, onUpdate }) {
   );
 }
 
-function StockMgr({ agentId, products, inventory, onUpdate }) {
+function StockMgr({ agentId, products, inventory, onUpdate, canEdit }) {
   const getQ = pid => inventory.find(i => i.agent_id === agentId && i.product_name === pid)?.qty || 0;
   return products.length === 0 ? <p style={{ color: T.textMuted, textAlign: "center", padding: "20px" }}>No products yet.</p> : (
     <div style={{ display: "grid", gap: "8px" }}>
-      {products.map(p => <StockItem key={p.id} agentId={agentId} product={p.name} qty={getQ(p.name)} onUpdate={onUpdate} />)}
+      {products.map(p => <StockItem key={p.id} agentId={agentId} product={p.name} qty={getQ(p.name)} onUpdate={onUpdate} canEdit={canEdit} />)}
     </div>
   );
 }
