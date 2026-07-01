@@ -1531,6 +1531,7 @@ export default function InfinistoresCRM() {
           </div>
           <div style={{ display: "flex", gap: "6px", marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${T.borderLight}`, justifyContent: "flex-end" }}>
             {FEATURE_CALLER && <Btn v="secondary" sz="xs" onClick={() => copyOrder(o)}><Copy size={13} />Copy</Btn>}
+            <a href={`tel:${cleanPhone(o.phone)}`}><Btn v="secondary" sz="xs"><Phone size={13} />Call</Btn></a>
             <a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} />WhatsApp</Btn></a>
             <Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} />Edit</Btn>
             {caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}
@@ -1565,7 +1566,7 @@ export default function InfinistoresCRM() {
                     <div className="cx-num" style={{ fontWeight: 700, fontSize: "13px" }}>{cur}{(o.price || 0).toLocaleString()}</div>
                     {o.delivery_fee > 0 && <div style={{ fontSize: "10px", color: T.danger, marginTop: "1px" }}>-{cur}{o.delivery_fee.toLocaleString()} fee</div>}
                   </td>
-                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{FEATURE_CALLER && <Btn v="secondary" sz="xs" title="Copy for WhatsApp" onClick={() => copyOrder(o)}><Copy size={13} /></Btn>}<a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn>{caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}</div></td>
+                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{FEATURE_CALLER && <Btn v="secondary" sz="xs" title="Copy for WhatsApp" onClick={() => copyOrder(o)}><Copy size={13} /></Btn>}<a href={`tel:${cleanPhone(o.phone)}`}><Btn v="secondary" sz="xs" title="Call customer"><Phone size={13} /></Btn></a><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn>{caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}</div></td>
                 </tr>)}
               </tbody>
             </table>
@@ -1914,7 +1915,10 @@ export default function InfinistoresCRM() {
             {FEATURE_CALLER && !isCaller && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Caller</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.assigned_to ? (staffByUid[o.assigned_to]?.full_name || staffByUid[o.assigned_to]?.email || "Assigned") : "— Unassigned —"}</div></div>}
             {o.notes && <div style={{ gridColumn: "1/-1", background: T.warningBg, padding: "10px 12px", borderRadius: T.rs }}><div style={{ fontSize: "10px", color: T.warning, textTransform: "uppercase", fontWeight: 700 }}>Notes</div><div style={{ fontSize: "13px", color: "#92400e" }}>{o.notes}</div></div>}
           </div>
-          {FEATURE_CALLER && <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px", marginBottom: "4px" }}><Btn v="secondary" onClick={() => copyOrder(o)} style={{ width: "100%", justifyContent: "center" }}><Copy size={15} />Copy order for WhatsApp group</Btn></div>}
+          <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px", marginBottom: "8px", display: "flex", gap: "8px" }}>
+            <a href={`tel:${cleanPhone(o.phone)}`} style={{ textDecoration: "none", flex: 1 }}><Btn v="secondary" style={{ width: "100%", justifyContent: "center" }}><Phone size={15} />Call customer</Btn></a>
+            {FEATURE_CALLER && <Btn v="secondary" onClick={() => copyOrder(o)} style={{ flex: 1, justifyContent: "center" }}><Copy size={15} />Copy for WhatsApp</Btn>}
+          </div>
           <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px" }}><div style={{ fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "6px", textTransform: "uppercase" }}>Send WhatsApp</div><div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>{STATUSES.map(s => <a key={s.value} href={getWALink(o, s.value)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}><Btn v={o.status === s.value ? "whatsapp" : "secondary"} sz="sm" style={{ fontSize: "11px" }}>{s.icon} {s.label}</Btn></a>)}</div></div>
           {orderEvents.length > 0 && <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px", marginTop: "12px" }}>
             <div style={{ fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "8px", textTransform: "uppercase" }}>Status history</div>
