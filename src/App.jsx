@@ -746,6 +746,8 @@ export default function InfinistoresCRM() {
   const [statusF, setStatusF] = useState("all");
   const [stateF, setStateF] = useState("all");
   const [agentF, setAgentF] = useState("all");
+  const [callerF, setCallerF] = useState("all"); // Phase 7: filter by assigned caller
+  const [queueMode, setQueueMode] = useState(true); // Phase 7: caller's focused queue vs all their orders
   const [dupeF, setDupeF] = useState(false);
   const [productF, setProductF] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -899,17 +901,29 @@ export default function InfinistoresCRM() {
     if (stateF !== "all" && o.state !== stateF) return false;
     if (agentF === "unassigned" && o.agent_id) return false;
     if (agentF !== "all" && agentF !== "unassigned" && o.agent_id !== agentF) return false;
+    if (callerF === "unassigned" && o.assigned_to) return false;
+    if (callerF !== "all" && callerF !== "unassigned" && o.assigned_to !== callerF) return false;
     if (dupeF && !dupeMap[o.id]) return false;
     if (productF !== "all" && o.product !== productF) return false;
     if (dateFrom) { const d = new Date(o.created_at); if (d < new Date(dateFrom)) return false; }
     if (dateTo) { const d = new Date(o.created_at); if (d > new Date(dateTo + "T23:59:59")) return false; }
     if (search) { const s = search.toLowerCase(); return [o.name, cleanPhone(o.phone), o.address, o.state, o.product, o.notes].some(f => (f || "").toLowerCase().includes(s)); }
     return true;
-  }), [cOrders, statusF, stateF, agentF, dupeF, dateFrom, dateTo, search, dupeMap, productF]);
+  }), [cOrders, statusF, stateF, agentF, callerF, dupeF, dateFrom, dateTo, search, dupeMap, productF]);
 
-  useEffect(() => { setOrdersPage(0); }, [search, statusF, stateF, agentF, dupeF, productF, dateFrom, dateTo, country]);
+  // Caller queue mode: only working statuses, oldest-first (work the backlog)
+  const isCaller = me?.role === "caller";
+  const viewOrders = useMemo(() => {
+    if (FEATURE_CALLER && isCaller && queueMode) {
+      return filtered.filter(o => CALLER_QUEUE_STATUSES.includes(o.status))
+        .slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    }
+    return filtered;
+  }, [filtered, isCaller, queueMode]);
 
-  const pagedOrders = useMemo(() => filtered.slice(ordersPage * ordersPageSize, (ordersPage + 1) * ordersPageSize), [filtered, ordersPage, ordersPageSize]);
+  useEffect(() => { setOrdersPage(0); }, [search, statusF, stateF, agentF, callerF, dupeF, productF, dateFrom, dateTo, country, queueMode]);
+
+  const pagedOrders = useMemo(() => viewOrders.slice(ordersPage * ordersPageSize, (ordersPage + 1) * ordersPageSize), [viewOrders, ordersPage, ordersPageSize]);
 
   const states = useMemo(() => [...new Set(cOrders.map(o => o.state).filter(Boolean))].sort(), [cOrders]);
   const productsList = useMemo(() => [...new Set(cOrders.map(o => o.product).filter(Boolean))].sort(), [cOrders]);
@@ -1392,7 +1406,7 @@ export default function InfinistoresCRM() {
   const navFlat = NAV.flatMap(g => g.items);
   const activeMeta = navFlat.find(n => n.id === tab) || navFlat[0];
 
-  const setCountrySafe = (v) => { setCountry(v); setStatusF("all"); setStateF("all"); setAgentF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); setShowFilters(false); };
+  const setCountrySafe = (v) => { setCountry(v); setStatusF("all"); setStateF("all"); setAgentF("all"); setCallerF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); setShowFilters(false); };
 
   const showStatsStrip = tab === "orders" || tab === "analytics";
 
@@ -1459,10 +1473,15 @@ export default function InfinistoresCRM() {
           <Search size={15} />
           <input placeholder="Name, phone or address…" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        {FEATURE_CALLER && isCaller && <div className="cx-seg2">
+          <button className={queueMode ? "on" : ""} onClick={() => setQueueMode(true)}>My queue</button>
+          <button className={!queueMode ? "on" : ""} onClick={() => setQueueMode(false)}>All mine</button>
+        </div>}
         {isMobile ? <Btn v="secondary" sz="sm" onClick={() => setShowFilters(!showFilters)} style={{ background: showFilters ? T.accentLight : T.surface, color: showFilters ? T.accent : T.text }}><Filter size={14} />Filters</Btn> : <>
           <span className={`cx-sel ${statusF !== "all" ? "act" : ""}`}><select value={statusF} onChange={e => setStatusF(e.target.value)}><option value="all">All statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select></span>
           <span className={`cx-sel ${stateF !== "all" ? "act" : ""}`}><select value={stateF} onChange={e => setStateF(e.target.value)}><option value="all">All {country === "ghana" ? "regions" : "states"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select></span>
           <span className={`cx-sel ${agentF !== "all" ? "act" : ""}`}><select value={agentF} onChange={e => setAgentF(e.target.value)}><option value="all">All agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></span>
+          {FEATURE_CALLER && !isCaller && callers.length > 0 && <span className={`cx-sel ${callerF !== "all" ? "act" : ""}`}><select value={callerF} onChange={e => setCallerF(e.target.value)}><option value="all">All callers</option><option value="unassigned">⚠ No caller</option>{callers.map(c => <option key={c.id} value={c.auth_user_id}>{c.full_name || c.email}</option>)}</select></span>}
           <span className={`cx-sel ${productF !== "all" ? "act" : ""}`}><select value={productF} onChange={e => setProductF(e.target.value)}><option value="all">All products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select></span>
           <span className={`cx-sel ${dateFrom ? "act" : ""}`}><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" /></span>
           <span className={`cx-sel ${dateTo ? "act" : ""}`}><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" /></span>
@@ -1474,6 +1493,7 @@ export default function InfinistoresCRM() {
         <select value={statusF} onChange={e => setStatusF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }}><option value="all">All statuses</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
         <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }}><option value="all">All {country === "ghana" ? "regions" : "states"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
         <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+        {FEATURE_CALLER && !isCaller && callers.length > 0 && <select value={callerF} onChange={e => setCallerF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All callers</option><option value="unassigned">⚠ No caller</option>{callers.map(c => <option key={c.id} value={c.auth_user_id}>{c.full_name || c.email}</option>)}</select>}
         <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
         <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
         <select value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>
@@ -1484,14 +1504,14 @@ export default function InfinistoresCRM() {
         {isMobile ? <select onChange={e => { if (e.target.value) doBulkStatus(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Set status…</option>{STATUSES.map(s => <option key={s.value} value={s.value}>{s.icon} {s.label}</option>)}</select>
           : STATUSES.map(s => <Btn key={s.value} v="secondary" sz="xs" onClick={() => doBulkStatus(s.value)} title={s.label}>{s.icon} {s.label}</Btn>)}
         {cAgents.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssign(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign agent…</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>}
-        {FEATURE_CALLER && caps.del && callers.length > 0 && <select onChange={e => { if (e.target.value) doBulkAssignCaller(e.target.value); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign caller…</option>{callers.map(c => <option key={c.id} value={c.auth_user_id}>{c.full_name || c.email}</option>)}</select>}
+        {FEATURE_CALLER && caps.del && callers.length > 0 && <select onChange={e => { const v = e.target.value; if (v === "__none__") doBulkAssignCaller(null); else if (v) doBulkAssignCaller(v); e.target.value = ""; }} style={{ padding: "5px 8px", borderRadius: T.rs, border: `1px solid ${T.border}`, fontSize: "12px", background: T.surface, fontFamily: T.f }}><option value="">Assign caller…</option><option value="__none__">— Unassign —</option>{callers.map(c => <option key={c.id} value={c.auth_user_id}>{c.full_name || c.email}</option>)}</select>}
         {caps.del && <Btn v="danger" sz="xs" onClick={doBulkDelete} style={{ marginLeft: "auto" }}><Trash2 size={13} />Delete {sel.size}</Btn>}
         <Btn v="ghost" sz="xs" onClick={() => setSel(new Set())}>✕</Btn>
       </div>}
 
       {/* MOBILE CARDS */}
       {isMobile ? <div style={{ display: "grid", gap: "10px" }}>
-        {filtered.length === 0 && <Card style={{ padding: "48px 20px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</Card>}
+        {viewOrders.length === 0 && <Card style={{ padding: "48px 20px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</Card>}
         {pagedOrders.map(o => <Card key={o.id} style={{ padding: "14px", background: sel.has(o.id) ? T.accentLight : T.surface, border: sel.has(o.id) ? `1.5px solid ${T.accentMid}` : `1px solid ${T.border}` }}>
           <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
             <input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ marginTop: "3px", width: "16px", height: "16px", accentColor: T.accent, flexShrink: 0 }} />
@@ -1516,7 +1536,7 @@ export default function InfinistoresCRM() {
             {caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}
           </div>
         </Card>)}
-        <Pagination page={ordersPage} total={filtered.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
+        <Pagination page={ordersPage} total={viewOrders.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
       </div> : (
         /* DESKTOP TABLE */
         <Card className="cx-tablewrap" style={{ overflow: "hidden" }}>
@@ -1527,7 +1547,7 @@ export default function InfinistoresCRM() {
                 <th>Customer</th><th>Product</th><th>{country === "ghana" ? "Region" : "State"}</th><th>Status</th><th>Agent</th><th className="r">Price</th><th className="r">Actions</th>
               </tr></thead>
               <tbody>
-                {filtered.length === 0 && <tr><td colSpan={8} style={{ padding: "56px", textAlign: "center", color: T.textMuted, fontSize: "14px" }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</td></tr>}
+                {viewOrders.length === 0 && <tr><td colSpan={8} style={{ padding: "56px", textAlign: "center", color: T.textMuted, fontSize: "14px" }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</td></tr>}
                 {pagedOrders.map(o => <tr key={o.id} className={sel.has(o.id) ? "sel" : ""}>
                   <td><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></td>
                   <td className="cx-cust" style={{ cursor: "pointer" }} onClick={() => setViewOrder(o)}>
@@ -1551,8 +1571,8 @@ export default function InfinistoresCRM() {
             </table>
           </div>
           <div style={{ padding: "8px 14px", borderTop: `1px solid ${T.borderLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: T.surfaceAlt }}>
-            <span style={{ fontSize: "11px", color: T.textMuted }}>{filtered.length} of {cOrders.length} orders{Object.keys(dupeMap).length > 0 && ` · ${Object.keys(dupeMap).length} duplicates`}</span>
-            <Pagination page={ordersPage} total={filtered.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
+            <span style={{ fontSize: "11px", color: T.textMuted }}>{viewOrders.length} of {cOrders.length} orders{Object.keys(dupeMap).length > 0 && ` · ${Object.keys(dupeMap).length} duplicates`}</span>
+            <Pagination page={ordersPage} total={viewOrders.length} pageSize={ordersPageSize} onPage={setOrdersPage} onPageSize={n => { setOrdersPageSize(n); setOrdersPage(0); }} />
           </div>
         </Card>
       )}
@@ -1891,6 +1911,7 @@ export default function InfinistoresCRM() {
             <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Price</div><div className="cx-num" style={{ fontWeight: 800, fontSize: "16px" }}>{cur}{(o.price || 0).toLocaleString()}</div></div>
             {(deliveryDateOf(o) || o.delivery_pref) && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Delivery date</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{fmtDate(deliveryDateOf(o)) || o.delivery_pref}</div></div>}
             {o.payment_option && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Payment</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.payment_option}</div></div>}
+            {FEATURE_CALLER && !isCaller && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Caller</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.assigned_to ? (staffByUid[o.assigned_to]?.full_name || staffByUid[o.assigned_to]?.email || "Assigned") : "— Unassigned —"}</div></div>}
             {o.notes && <div style={{ gridColumn: "1/-1", background: T.warningBg, padding: "10px 12px", borderRadius: T.rs }}><div style={{ fontSize: "10px", color: T.warning, textTransform: "uppercase", fontWeight: 700 }}>Notes</div><div style={{ fontSize: "13px", color: "#92400e" }}>{o.notes}</div></div>}
           </div>
           {FEATURE_CALLER && <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: "12px", marginBottom: "4px" }}><Btn v="secondary" onClick={() => copyOrder(o)} style={{ width: "100%", justifyContent: "center" }}><Copy size={15} />Copy order for WhatsApp group</Btn></div>}
