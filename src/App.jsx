@@ -85,8 +85,9 @@ const sb = {
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=in.(${ids.map(i => `"${i}"`).join(",")})`, { method: "DELETE", headers: this.headers });
     if (!r.ok) throw new Error(`Failed to delete (${r.status})`);
   },
-  async upsert(table, data) {
-    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}`, { method: "POST", headers: { ...this.headers, "Prefer": "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
+  async upsert(table, data, onConflict) {
+    const q = onConflict ? `?on_conflict=${onConflict}` : "";
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}${q}`, { method: "POST", headers: { ...this.headers, "Prefer": "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
     if (!r.ok) { const e = await r.text(); throw new Error(`Failed to save (${r.status}): ${e}`); }
     return r.json();
   }
@@ -1331,8 +1332,11 @@ export default function InfinistoresCRM() {
   };
 
   const doSaveTemplate = async (key, msg) => {
-    setTemplates(prev => ({ ...prev, [key]: msg }));
-    try { await sb.upsert("templates", { status_key: key, message: msg }); } catch (err) { showToast(err.message); }
+    try {
+      await sb.upsert("templates", { status_key: key, message: msg }, "status_key");
+      setTemplates(prev => ({ ...prev, [key]: msg }));
+      showToast("Message saved", "success");
+    } catch (err) { showToast(err.message); throw err; }
   };
 
   const doAddOrder = async (data) => {
@@ -1835,11 +1839,8 @@ export default function InfinistoresCRM() {
       <div className="cx-head">
         <div><h1 className="cx-h1">Messages</h1><div className="cx-sub">WhatsApp templates per status</div></div>
       </div>
-      <Card style={{ padding: "12px 16px", marginBottom: "12px", fontSize: "12px", color: T.textMuted }}><strong>Placeholders:</strong> {["{name}","{product}","{address}","{price}","{qty}","{state}","{agent}","{pack}","{phone}","{notes}"].map(p => <code key={p} style={{ marginLeft: "3px", color: T.accent, fontWeight: 700 }}>{p}</code>)}</Card>
-      <div style={{ display: "grid", gap: "10px" }}>{STATUSES.map(s => <Card key={s.value} style={{ padding: "14px" }}>
-        <div style={{ marginBottom: "8px" }}><Pill status={s.value} /></div>
-        <textarea value={templates[s.value] || ""} onChange={e => doSaveTemplate(s.value, e.target.value)} rows={3} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", fontFamily: T.f, resize: "vertical", boxSizing: "border-box", outline: "none", background: T.surfaceAlt, lineHeight: 1.5 }} />
-      </Card>)}</div>
+      <Card style={{ padding: "12px 16px", marginBottom: "12px", fontSize: "12px", color: T.textMuted }}><strong>Placeholders:</strong> {["{name}","{product}","{address}","{price}","{qty}","{state}","{agent}","{pack}","{phone}","{notes}"].map(p => <code key={p} style={{ marginLeft: "3px", color: T.accent, fontWeight: 700 }}>{p}</code>)}<div style={{ marginTop: "6px" }}>Tip: press <strong>Enter</strong> for a new line, and Enter twice for a blank line between paragraphs — WhatsApp keeps your spacing.</div></Card>
+      <div style={{ display: "grid", gap: "10px" }}>{STATUSES.map(s => <TemplateEditor key={s.value} status={s} value={templates[s.value] || ""} onSave={doSaveTemplate} />)}</div>
     </div>
   );
 
@@ -2155,6 +2156,34 @@ function PurchaseForm({ products, cur, onSubmit }) {
     {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
     <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, quantity: qty, unit_cost: cost === "" ? null : +cost, note }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Record purchase</Btn>
   </div>;
+}
+
+function TemplateEditor({ status, value, onSave }) {
+  const [text, setText] = useState(value || "");
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  useEffect(() => { setText(value || ""); }, [value]);
+  const dirty = text !== (value || "");
+  const save = async () => {
+    setSaving(true);
+    try { await onSave(status.value, text); setJustSaved(true); setTimeout(() => setJustSaved(false), 2000); }
+    catch { /* toast shown by onSave */ }
+    setSaving(false);
+  };
+  return (
+    <Card style={{ padding: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+        <Pill status={status.value} />
+        {dirty ? <Btn sz="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+          : justSaved ? <span style={{ fontSize: "12px", color: T.accent, fontWeight: 700 }}>✓ Saved</span>
+            : <span style={{ fontSize: "11px", color: T.textLight }}>Up to date</span>}
+      </div>
+      <textarea value={text} onChange={e => setText(e.target.value)} rows={5}
+        placeholder="Write the WhatsApp message for this status. Use {name}, {product}, {price} etc. Press Enter for line breaks."
+        style={{ width: "100%", padding: "10px", border: `1.5px solid ${dirty ? T.accent : T.border}`, borderRadius: T.rs, fontSize: "13px", fontFamily: T.f, resize: "vertical", boxSizing: "border-box", outline: "none", background: T.surfaceAlt, lineHeight: 1.5 }} />
+      {dirty && <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "4px" }}>Unsaved changes — click Save.</div>}
+    </Card>
+  );
 }
 
 function StaffForm({ onSubmit }) {
