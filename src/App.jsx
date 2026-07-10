@@ -137,6 +137,10 @@ const auth = {
     if (this.session) { this.session.user = u; localStorage.setItem(AUTH_KEY, JSON.stringify(this.session)); }
     return u;
   },
+  async recover(email) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/recover`, { method: "POST", headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.msg || d.error_description || "Could not send the reset email"); }
+  },
   async setPassword(password) {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { method: "PUT", headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
     const d = await r.json();
@@ -673,10 +677,11 @@ function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!email || !password) { setError("Enter your email and password."); return; }
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setNotice("");
     try {
       await auth.signIn(email.trim(), password);
       await onLogin();
@@ -684,6 +689,13 @@ function LoginScreen({ onLogin }) {
       setError(e.message === "Invalid login credentials" ? "Wrong email or password." : e.message);
       setBusy(false);
     }
+  };
+  const forgot = async () => {
+    if (!email.trim()) { setError("Enter your email above first, then tap “Forgot password?”"); return; }
+    setBusy(true); setError(""); setNotice("");
+    try { await auth.recover(email.trim()); setNotice("Reset link sent — check your email."); }
+    catch (e) { setError(e.message); }
+    setBusy(false);
   };
   const inp = { width: "100%", padding: "12px 13px", border: `1.5px solid ${T.border}`, borderRadius: "10px", fontSize: "14px", outline: "none", fontFamily: T.f, boxSizing: "border-box", marginBottom: "10px", background: "#fff", color: T.text };
   return (
@@ -699,8 +711,10 @@ function LoginScreen({ onLogin }) {
         <input type="email" autoComplete="username" placeholder="Email" value={email} onChange={e => { setEmail(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={inp} />
         <input type="password" autoComplete="current-password" placeholder="Password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={inp} />
         {error && <div style={{ color: T.danger, fontSize: "12px", margin: "2px 0 10px", fontWeight: 700 }}>{error}</div>}
+        {notice && <div style={{ color: T.accent, fontSize: "12px", margin: "2px 0 10px", fontWeight: 700 }}>{notice}</div>}
         <button onClick={submit} disabled={busy}
           style={{ width: "100%", padding: "13px", background: busy ? T.textLight : `linear-gradient(135deg,${T.accent},${T.accentDark})`, color: "#fff", border: "none", borderRadius: "12px", fontSize: "14px", fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: T.f, marginTop: "4px" }}>{busy ? "Signing in…" : "Sign in"}</button>
+        <button onClick={forgot} disabled={busy} style={{ width: "100%", padding: "10px", background: "none", border: "none", color: T.textMuted, fontSize: "12.5px", fontWeight: 600, cursor: "pointer", fontFamily: T.f, marginTop: "6px" }}>Forgot password?</button>
       </div>
     </div>
   );
@@ -970,6 +984,10 @@ export default function InfinistoresCRM() {
 
   // Caller queue mode: only working statuses, oldest-first (work the backlog)
   const isCaller = me?.role === "caller";
+  // View-only roles (viewer/accountant) get read-only order rows — no status
+  // dropdown, edit, assign, or selection (RLS blocks those writes anyway;
+  // this stops the UI offering controls that would only fail).
+  const canEditOrders = caps.orders === "edit";
   const viewOrders = useMemo(() => {
     if (FEATURE_CALLER && isCaller && queueMode) {
       return filtered.filter(o => CALLER_QUEUE_STATUSES.includes(o.status))
@@ -1557,7 +1575,7 @@ export default function InfinistoresCRM() {
         {viewOrders.length === 0 && <Card style={{ padding: "48px 20px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</Card>}
         {pagedOrders.map(o => <Card key={o.id} style={{ padding: "14px", background: sel.has(o.id) ? T.accentLight : T.surface, border: sel.has(o.id) ? `1.5px solid ${T.accentMid}` : `1px solid ${T.border}` }}>
           <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
-            <input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ marginTop: "3px", width: "16px", height: "16px", accentColor: T.accent, flexShrink: 0 }} />
+            {canEditOrders && <input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ marginTop: "3px", width: "16px", height: "16px", accentColor: T.accent, flexShrink: 0 }} />}
             <div style={{ flex: 1, minWidth: 0 }} onClick={() => setViewOrder(o)}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px", marginBottom: "4px" }}>
                 <div style={{ fontWeight: 700, fontSize: "14px", color: T.text }}>
@@ -1567,8 +1585,8 @@ export default function InfinistoresCRM() {
               </div>
               <div style={{ fontSize: "12px", color: T.textMuted, marginBottom: "8px" }}>{cleanPhone(o.phone)} · {o.state} · {o.product} ×{o.qty}</div>
               <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                <StatusSelect value={o.status} onChange={e => { e.stopPropagation(); doUpdateStatus(o.id, e.target.value); }} />
-                {o.agent_name ? <span style={{ fontSize: "11px", color: T.textMuted, background: T.surfaceAlt, padding: "3px 8px", borderRadius: "6px" }}>{o.agent_name}</span> : <Btn v="ghost" sz="xs" onClick={e => { e.stopPropagation(); setShowAssign(o.id); }} style={{ color: T.accent }}>+ Assign</Btn>}
+                {canEditOrders ? <StatusSelect value={o.status} onChange={e => { e.stopPropagation(); doUpdateStatus(o.id, e.target.value); }} /> : <Pill status={o.status} />}
+                {o.agent_name ? <span style={{ fontSize: "11px", color: T.textMuted, background: T.surfaceAlt, padding: "3px 8px", borderRadius: "6px" }}>{o.agent_name}</span> : canEditOrders ? <Btn v="ghost" sz="xs" onClick={e => { e.stopPropagation(); setShowAssign(o.id); }} style={{ color: T.accent }}>+ Assign</Btn> : null}
               </div>
             </div>
           </div>
@@ -1576,7 +1594,7 @@ export default function InfinistoresCRM() {
             {FEATURE_CALLER && <Btn v="secondary" sz="xs" onClick={() => copyOrder(o)}><Copy size={13} />Copy</Btn>}
             <a href={`tel:${cleanPhone(o.phone)}`}><Btn v="secondary" sz="xs"><Phone size={13} />Call</Btn></a>
             <a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} />WhatsApp</Btn></a>
-            <Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} />Edit</Btn>
+            {canEditOrders && <Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} />Edit</Btn>}
             {caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}
           </div>
         </Card>)}
@@ -1587,13 +1605,13 @@ export default function InfinistoresCRM() {
           <div style={{ overflowX: "auto" }}>
             <table className="cx-table">
               <thead><tr>
-                <th style={{ width: "40px" }}><input type="checkbox" checked={pagedOrders.length > 0 && pagedOrders.every(o => sel.has(o.id))} onChange={toggleAll} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></th>
+                <th style={{ width: "40px" }}>{canEditOrders && <input type="checkbox" checked={pagedOrders.length > 0 && pagedOrders.every(o => sel.has(o.id))} onChange={toggleAll} style={{ width: "15px", height: "15px", accentColor: T.accent }} />}</th>
                 <th>Customer</th><th>Product</th><th>{country === "ghana" ? "Region" : "State"}</th><th>Status</th><th>Agent</th><th className="r">Price</th><th className="r">Actions</th>
               </tr></thead>
               <tbody>
                 {viewOrders.length === 0 && <tr><td colSpan={8} style={{ padding: "56px", textAlign: "center", color: T.textMuted, fontSize: "14px" }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</td></tr>}
                 {pagedOrders.map(o => <tr key={o.id} className={sel.has(o.id) ? "sel" : ""}>
-                  <td><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></td>
+                  <td>{canEditOrders && <input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} style={{ width: "15px", height: "15px", accentColor: T.accent }} />}</td>
                   <td className="cx-cust" style={{ cursor: "pointer" }} onClick={() => setViewOrder(o)}>
                     <b>{o.name}{dupeMap[o.id] && <span style={{ background: T.warningBg, color: T.warning, fontSize: "9px", padding: "1px 6px", borderRadius: "4px", marginLeft: "6px", fontWeight: 700 }}>DUPE</span>}</b>
                     <span>{cleanPhone(o.phone)}</span>
@@ -1603,13 +1621,13 @@ export default function InfinistoresCRM() {
                     <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "1px" }}>{o.pack_name} · ×{o.qty}</div>
                   </td>
                   <td style={{ fontSize: "12px", color: T.textMuted }}>{o.state}</td>
-                  <td><StatusSelect value={o.status} onChange={e => doUpdateStatus(o.id, e.target.value)} /></td>
-                  <td>{o.agent_name ? <span style={{ fontSize: "12px", fontWeight: 600, background: T.surfaceAlt, padding: "3px 9px", borderRadius: "6px" }}>{o.agent_name}</span> : <Btn v="ghost" sz="xs" onClick={() => setShowAssign(o.id)} style={{ color: T.accent }}>+ Assign</Btn>}</td>
+                  <td>{canEditOrders ? <StatusSelect value={o.status} onChange={e => doUpdateStatus(o.id, e.target.value)} /> : <Pill status={o.status} />}</td>
+                  <td>{o.agent_name ? <span style={{ fontSize: "12px", fontWeight: 600, background: T.surfaceAlt, padding: "3px 9px", borderRadius: "6px" }}>{o.agent_name}</span> : canEditOrders ? <Btn v="ghost" sz="xs" onClick={() => setShowAssign(o.id)} style={{ color: T.accent }}>+ Assign</Btn> : <span style={{ color: T.textLight, fontSize: "12px" }}>—</span>}</td>
                   <td className="r">
                     <div className="cx-num" style={{ fontWeight: 700, fontSize: "13px" }}>{cur}{(o.price || 0).toLocaleString()}</div>
                     {o.delivery_fee > 0 && <div style={{ fontSize: "10px", color: T.danger, marginTop: "1px" }}>-{cur}{o.delivery_fee.toLocaleString()} fee</div>}
                   </td>
-                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{FEATURE_CALLER && <Btn v="secondary" sz="xs" title="Copy for WhatsApp" onClick={() => copyOrder(o)}><Copy size={13} /></Btn>}<a href={`tel:${cleanPhone(o.phone)}`}><Btn v="secondary" sz="xs" title="Call customer"><Phone size={13} /></Btn></a><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a><Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn>{caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}</div></td>
+                  <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{FEATURE_CALLER && <Btn v="secondary" sz="xs" title="Copy for WhatsApp" onClick={() => copyOrder(o)}><Copy size={13} /></Btn>}<a href={`tel:${cleanPhone(o.phone)}`}><Btn v="secondary" sz="xs" title="Call customer"><Phone size={13} /></Btn></a><a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} /></Btn></a>{canEditOrders && <Btn v="secondary" sz="xs" onClick={() => setEditOrder({ ...o })}><Pencil size={13} /></Btn>}{caps.del && <Btn v="ghost" sz="xs" onClick={() => doDeleteOrder(o.id)} style={{ color: T.danger }}><Trash2 size={13} /></Btn>}</div></td>
                 </tr>)}
               </tbody>
             </table>
@@ -1975,11 +1993,11 @@ export default function InfinistoresCRM() {
           {FEATURE_CALLER && <div style={{ gridColumn: "1/-1" }}><Inp label="Landmark" value={editOrder.landmark || ""} onChange={e => setEditOrder(p => ({ ...p, landmark: e.target.value }))} /></div>}
           <Inp label="Product" value={editOrder.product} onChange={e => setEditOrder(p => ({ ...p, product: e.target.value }))} />
           <Inp label="Pack" value={editOrder.pack_name} onChange={e => setEditOrder(p => ({ ...p, pack_name: e.target.value }))} />
-          <Inp label="Qty" type="number" value={editOrder.qty} onChange={e => setEditOrder(p => ({ ...p, qty: +e.target.value || 1 }))} />
-          <Inp label={`Price (${cur})`} type="number" value={editOrder.price} onChange={e => setEditOrder(p => ({ ...p, price: +e.target.value || 0 }))} />
+          <Inp label="Qty" type="number" disabled={isCaller} value={editOrder.qty} onChange={e => setEditOrder(p => ({ ...p, qty: +e.target.value || 1 }))} />
+          <Inp label={`Price (${cur})`} type="number" disabled={isCaller} value={editOrder.price} onChange={e => setEditOrder(p => ({ ...p, price: +e.target.value || 0 }))} />
           <Inp label="Qty delivered" type="number" value={editOrder.actual_qty_delivered} onChange={e => setEditOrder(p => ({ ...p, actual_qty_delivered: +e.target.value || 0 }))} />
           <Inp label={`Collected (${cur})`} type="number" value={editOrder.actual_price_collected} onChange={e => setEditOrder(p => ({ ...p, actual_price_collected: +e.target.value || 0 }))} />
-          <Inp label={`Delivery fee (${cur})`} type="number" value={editOrder.delivery_fee} onChange={e => setEditOrder(p => ({ ...p, delivery_fee: +e.target.value || 0 }))} />
+          <Inp label={`Delivery fee (${cur})`} type="number" disabled={isCaller} value={editOrder.delivery_fee} onChange={e => setEditOrder(p => ({ ...p, delivery_fee: +e.target.value || 0 }))} />
           <div style={{ marginBottom: "10px" }}><label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase" }}>Agent</label>
             <select value={editOrder.agent_id || ""} onChange={e => { const a = agents.find(x => x.id === e.target.value); setEditOrder(p => ({ ...p, agent_id: e.target.value || null, agent_name: a?.name || "" })); }} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt }}>
               <option value="">Unassigned</option>
