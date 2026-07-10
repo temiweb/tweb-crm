@@ -18,7 +18,6 @@ import {
 // none set on Vercel, so it falls back to the hardcoded prod values below.
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://amdcmtfuytnplrzxabip.supabase.co";
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY || "sb_publishable_vQ7vHaXXhmLprI6Ph07cDA_wbXkLhB2";
-const ACCESS_PIN = "4285"; // Change this to your real PIN
 
 // ═══════════════════════════════════════════════
 // SUPABASE CLIENT (lightweight, no SDK needed)
@@ -707,6 +706,49 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ── Shared blocks (top-level so they keep identity across renders; defining
+//    these inside the main component made React remount them on every state
+//    change — e.g. the custom date inputs lost focus while typing) ──
+
+function PeriodFilter({ range, setRange, from, setFrom, to, setTo }) {
+  return (
+    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", marginBottom: "12px" }}>
+      <span className="cx-eyebrow" style={{ marginRight: "2px" }}>Period</span>
+      {[{ v: "today", l: "Today" }, { v: "week", l: "Week" }, { v: "month", l: "Month" }, { v: "30d", l: "30d" }, { v: "90d", l: "90d" }, { v: "all", l: "All time" }, { v: "custom", l: "Custom" }].map(r => (
+        <button key={r.v} onClick={() => setRange(r.v)} style={{ padding: "5px 13px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, fontFamily: T.f, cursor: "pointer", border: "none", background: range === r.v ? T.accent : T.surface, color: range === r.v ? "#fff" : T.textMuted, boxShadow: range === r.v ? "none" : `0 0 0 1.5px ${T.border}` }}>{r.l}</button>
+      ))}
+      {range === "custom" && <>
+        <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={{ padding: "5px 10px", borderRadius: T.rs, fontSize: "12px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
+        <span style={{ fontSize: "12px", color: T.textMuted }}>→</span>
+        <input type="date" value={to} onChange={e => setTo(e.target.value)} style={{ padding: "5px 10px", borderRadius: T.rs, fontSize: "12px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
+      </>}
+    </div>
+  );
+}
+
+function StatsStrip({ cards, ...period }) {
+  return (
+    <>
+      <PeriodFilter {...period} />
+      <div className="cx-grid cx-kpis" style={{ marginBottom: "18px" }}>
+        {cards.map(c => <KPI key={c.l} accent={c.accent} v={c.v} l={c.l} d={c.d} dir={c.dir} icon={c.icon} />)}
+      </div>
+    </>
+  );
+}
+
+function CountrySeg({ inRail, country, onChange, counts }) {
+  return (
+    <div className="cx-seg2" style={inRail ? { background: "rgba(255,255,255,0.07)", border: "none" } : {}}>
+      {[{ v: "nigeria", f: "🇳🇬", l: "NG" }, { v: "ghana", f: "🇬🇭", l: "GH" }].map(c => (
+        <button key={c.v} className={country === c.v ? "on" : ""} onClick={() => onChange(c.v)} style={inRail ? { color: country === c.v ? "#fff" : "rgba(255,255,255,0.55)", background: country === c.v ? "rgba(255,255,255,0.15)" : "transparent" } : {}}>
+          {c.f} {c.l} <span style={{ fontSize: "10px", fontWeight: 800, opacity: 0.7 }}>{counts[c.v] || 0}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════
@@ -728,6 +770,11 @@ export default function InfinistoresCRM() {
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState({});
   const [loaded, setLoaded] = useState(false);
+  // Ref mirror of `loaded` for use inside the 30s poll: the interval captures
+  // loadAll from the render where it was registered, so reading the `loaded`
+  // STATE there sees a stale false — which made transient poll failures
+  // escalate to the full-screen Connection Error instead of the ⚠ Offline badge.
+  const loadedRef = useRef(false);
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [syncError, setSyncError] = useState(false);
@@ -784,7 +831,14 @@ export default function InfinistoresCRM() {
   // ─── LOAD ALL DATA ───
   const loadAll = async (retries = 3) => {
     try {
-      await auth.ensureFresh();
+      // If the session can't be refreshed, sign out cleanly — otherwise the
+      // queries would run with the anon key and RLS would return empty arrays,
+      // showing a logged-in-looking dashboard with zero orders.
+      if (auth.session && !(await auth.ensureFresh())) {
+        doSignOut();
+        showToast("Your session expired — please sign in again.");
+        return;
+      }
       const [o, a, p, inv, t] = await Promise.all([
         sb.queryAll("orders", "order=created_at.desc"),
         sb.query("agents", "order=created_at.asc"),
@@ -798,6 +852,7 @@ export default function InfinistoresCRM() {
       setTemplates(tMap);
       setLoadError(null);
       setLoaded(true);
+      loadedRef.current = true;
       setSyncError(false);
       // Phase 4 tables — best-effort (may not exist in older environments)
       try {
@@ -811,7 +866,7 @@ export default function InfinistoresCRM() {
       } catch { /* inventory tables not present yet */ }
       try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
     } catch (e) {
-      if (!loaded) {
+      if (!loadedRef.current) {
         if (retries > 1) {
           await new Promise(r => setTimeout(r, 1500));
           return loadAll(retries - 1);
@@ -819,6 +874,7 @@ export default function InfinistoresCRM() {
         setLoadError(e.message);
         setLoaded(true);
       } else {
+        // Already have data — a failed poll is just a sync hiccup (⚠ Offline badge)
         setSyncError(true);
       }
     }
@@ -847,7 +903,7 @@ export default function InfinistoresCRM() {
     await loadAll();
   };
 
-  const doSignOut = () => { auth.signOut(); setAuthed(false); setMe(null); setLoaded(false); };
+  const doSignOut = () => { auth.signOut(); setAuthed(false); setMe(null); setLoaded(false); loadedRef.current = false; };
 
   useEffect(() => {
     (async () => {
@@ -1390,7 +1446,7 @@ export default function InfinistoresCRM() {
         <div style={{ fontSize: "32px", marginBottom: "12px" }}>⚠️</div>
         <div style={{ fontFamily: T.fd, fontWeight: 700, fontSize: "18px", marginBottom: "8px" }}>Connection Error</div>
         <div style={{ color: T.textMuted, fontSize: "13px", marginBottom: "20px" }}>{loadError}</div>
-        <Btn onClick={() => { setLoadError(null); setLoaded(false); loadAll(); }}>Retry</Btn>
+        <Btn onClick={() => { setLoadError(null); setLoaded(false); loadedRef.current = false; loadAll(); }}>Retry</Btn>
       </Card>
     </div>
   );
@@ -1415,20 +1471,6 @@ export default function InfinistoresCRM() {
   const showStatsStrip = tab === "orders" || tab === "analytics";
 
   // ── shared content blocks ──
-  const PeriodFilter = () => (
-    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", marginBottom: "12px" }}>
-      <span className="cx-eyebrow" style={{ marginRight: "2px" }}>Period</span>
-      {[{ v: "today", l: "Today" }, { v: "week", l: "Week" }, { v: "month", l: "Month" }, { v: "30d", l: "30d" }, { v: "90d", l: "90d" }, { v: "all", l: "All time" }, { v: "custom", l: "Custom" }].map(r => (
-        <button key={r.v} onClick={() => setStatsRange(r.v)} style={{ padding: "5px 13px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, fontFamily: T.f, cursor: "pointer", border: "none", background: statsRange === r.v ? T.accent : T.surface, color: statsRange === r.v ? "#fff" : T.textMuted, boxShadow: statsRange === r.v ? "none" : `0 0 0 1.5px ${T.border}` }}>{r.l}</button>
-      ))}
-      {statsRange === "custom" && <>
-        <input type="date" value={statsFrom} onChange={e => setStatsFrom(e.target.value)} style={{ padding: "5px 10px", borderRadius: T.rs, fontSize: "12px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
-        <span style={{ fontSize: "12px", color: T.textMuted }}>→</span>
-        <input type="date" value={statsTo} onChange={e => setStatsTo(e.target.value)} style={{ padding: "5px 10px", borderRadius: T.rs, fontSize: "12px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
-      </>}
-    </div>
-  );
-
   const kpiCards = [
     { l: "Orders", v: stats.total, accent: "#1a7a4c", icon: ClipboardList },
     { l: "Delivered", v: stats.delivered, d: `${stats.rate}% rate`, dir: "flat", accent: "#1d4ed8", icon: CheckCircle2 },
@@ -1443,14 +1485,11 @@ export default function InfinistoresCRM() {
     ] : []),
   ];
 
-  const StatsStrip = () => (
-    <>
-      <PeriodFilter />
-      <div className="cx-grid cx-kpis" style={{ marginBottom: "18px" }}>
-        {kpiCards.map(c => <KPI key={c.l} accent={c.accent} v={c.v} l={c.l} d={c.d} dir={c.dir} icon={c.icon} />)}
-      </div>
-    </>
-  );
+  // Rendered via a JSX variable so both screens share one instance definition.
+  // (Plain object, NOT useMemo — this line sits after the early returns above,
+  // so a hook here would violate the Rules of Hooks.)
+  const statsStrip = <StatsStrip cards={kpiCards} range={statsRange} setRange={setStatsRange} from={statsFrom} setFrom={setStatsFrom} to={statsTo} setTo={setStatsTo} />;
+  const countryCounts = { nigeria: orders.filter(o => o.country === "nigeria").length, ghana: orders.filter(o => o.country === "ghana").length };
 
   // ── ORDERS ──
   const OrdersScreen = (
@@ -1463,7 +1502,7 @@ export default function InfinistoresCRM() {
         </div>
       </div>
 
-      <StatsStrip />
+      {statsStrip}
 
       {FEATURE_CALLER && staleOrders.length > 0 && <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.warningBg, border: `1.5px solid #fcd9a8` }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}><AlertTriangle size={16} style={{ color: T.warning }} /><span style={{ fontWeight: 700, color: T.warning, fontSize: "13px" }}>{staleOrders.length} order{staleOrders.length !== 1 ? "s" : ""} stuck in transit over {STALE_HOURS}h — chase these up</span></div>
@@ -1759,7 +1798,7 @@ export default function InfinistoresCRM() {
       <div className="cx-head">
         <div><h1 className="cx-h1">Analytics</h1><div className="cx-sub">{country === "ghana" ? "Ghana" : "Nigeria"} · order-to-doorstep performance</div></div>
       </div>
-      <StatsStrip />
+      {statsStrip}
 
       {FEATURE_CALLER && callers.length > 0 && <Card style={{ overflow: "hidden", marginBottom: "14px" }}>
         <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Caller effectiveness</span><span className="cx-sub" style={{ marginLeft: "8px" }}>of the orders given to each caller, where did they land</span></div>
@@ -1880,16 +1919,6 @@ export default function InfinistoresCRM() {
   );
 
   const screen = { orders: OrdersScreen, agents: AgentsScreen, inventory: InventoryScreen, analytics: AnalyticsScreen, templates: TemplatesScreen, staff: caps.staff ? StaffScreen : OrdersScreen }[tab] || OrdersScreen;
-
-  const CountrySeg = ({ inRail }) => (
-    <div className="cx-seg2" style={inRail ? { background: "rgba(255,255,255,0.07)", border: "none" } : {}}>
-      {[{ v: "nigeria", f: "🇳🇬", l: "NG" }, { v: "ghana", f: "🇬🇭", l: "GH" }].map(c => (
-        <button key={c.v} className={country === c.v ? "on" : ""} onClick={() => setCountrySafe(c.v)} style={inRail ? { color: country === c.v ? "#fff" : "rgba(255,255,255,0.55)", background: country === c.v ? "rgba(255,255,255,0.15)" : "transparent" } : {}}>
-          {c.f} {c.l} <span style={{ fontSize: "10px", fontWeight: 800, opacity: 0.7 }}>{orders.filter(o => o.country === c.v).length}</span>
-        </button>
-      ))}
-    </div>
-  );
 
   // ═══════════════════════════════════════════════
   // MODALS (shared between layouts)
@@ -2024,7 +2053,7 @@ export default function InfinistoresCRM() {
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
             {saving && <span style={{ fontSize: "11px", fontWeight: 700, color: "#86efac" }}>Saving…</span>}
             {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ fontSize: "11px", fontWeight: 700, color: "#fca5a5" }}>⚠ Offline</span>}
-            <CountrySeg inRail />
+            <CountrySeg inRail country={country} onChange={setCountrySafe} counts={countryCounts} />
             <button onClick={doSignOut} title={`Sign out${me ? " — " + me.full_name : ""}`} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "rgba(255,255,255,0.7)", borderRadius: "8px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center" }}><LogOut size={15} /></button>
           </div>
         </div>
@@ -2085,7 +2114,7 @@ export default function InfinistoresCRM() {
             <div style={{ flex: 1 }} />
             {saving && <span style={{ color: T.accent, fontSize: "12px", fontWeight: 700, background: T.accentLight, padding: "5px 11px", borderRadius: "8px" }}>Saving…</span>}
             {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ color: T.danger, fontSize: "12px", fontWeight: 700, background: T.dangerBg, padding: "5px 11px", borderRadius: "8px", cursor: "pointer" }}>⚠ Offline</span>}
-            <CountrySeg />
+            <CountrySeg country={country} onChange={setCountrySafe} counts={countryCounts} />
             <button className="cx-iconbtn" onClick={() => { setSyncError(false); loadAll(); }} title="Refresh"><RefreshCw size={16} /></button>
             {me && <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "0 4px 0 8px", borderLeft: `1px solid ${T.border}` }}>
               <div style={{ textAlign: "right", lineHeight: 1.15 }}>
