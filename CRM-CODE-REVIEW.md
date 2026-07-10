@@ -1,6 +1,7 @@
 # Infinistores CRM — Full Code & System Review
 
 *Audit date: 2026-07-01 · Scope: src/App.jsx (2,316 lines), both edge functions, migrations 0001–0007, index.html, deployment & ops.*
+*Status update 2026-07-02: **P0 pass shipped** (861c799) — items 1, 2, 4, 5 fixed. **Integrity pass shipped** (0b3b8c1 + migration 0008) — item 3 (money-column trigger), P1 #9 (forgot password), P3 #21 (viewer gating) done and verified on staging.*
 *Prioritised: P0 = real bugs / integrity risks · P1 = security hardening · P2 = architecture & scale · P3 = UX/polish.*
 
 ---
