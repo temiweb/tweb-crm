@@ -12,3 +12,7 @@ dist/
 # logs / os
 *.log
 .DS_Store
+
+# demo seed secrets & Claude Code internals
+.env.seed
+.claude/
