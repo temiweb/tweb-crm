@@ -231,6 +231,7 @@ const CALLER_QUEUE_STATUSES = ["pending", "call_back", "postponed", "follow_up"]
 // One order → clean WhatsApp-group payload for the clipboard
 function orderClipboard(o, cur) {
   const wa = cleanPhone(o.whatsapp);
+  const stateLabel = o.country === "ghana" ? "Region" : "State";
   return [
     `NEW ORDER — ${o.product || ""} x${o.qty || 1}`,
     `Name: ${o.name || ""}`,
@@ -238,6 +239,7 @@ function orderClipboard(o, cur) {
     wa && wa !== cleanPhone(o.phone) ? `WhatsApp: ${wa}` : null,
     `Address: ${o.address || ""}`,
     o.landmark ? `Landmark: ${o.landmark}` : null,
+    o.state ? `${stateLabel}: ${o.state}` : null,
     `Amount to collect: ${cur}${(o.price || 0).toLocaleString()}`,
     o.notes ? `Note: ${o.notes}` : null,
   ].filter(Boolean).join("\n");
