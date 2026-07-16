@@ -22,7 +22,8 @@ function cleanPhone(p: string): string {
   return s;
 }
 
-// Handles both "Buy 2 ... = ₦28,000 (...)" and "Product (10 Net ...) = ₦12,000"
+// Fallback parser for a prose package label (old forms without "Show Values").
+// Handles both "Buy 2 ... = ₦28,000 (...)" and "Product (10 Net ...) = ₦12,000".
 function parsePackage(pkg: string): { packName: string; qty: number; price: number } {
   if (!pkg) return { packName: "", qty: 1, price: 0 };
   const priceM = pkg.match(/₦\s*([\d,]+)/);
@@ -33,6 +34,25 @@ function parsePackage(pkg: string): { packName: string; qty: number; price: numb
     qty: qtyM ? parseInt(qtyM[1], 10) : 1,
     price: priceM ? parseInt(priceM[1].replace(/,/g, ""), 10) : 0,
   };
+}
+
+const toNum = (s: string) => Number(s.replace(/[₦,\s]/g, ""));
+
+// Resolve a package field into { packName, qty, price }.
+// Preferred form is a structured dropdown value "units|amount|name"
+// (WPForms "Show Values") — reliable even for bundles like "Buy 2, Get 1 Free".
+// Anything without the "|" delimiter falls back to best-effort label parsing,
+// so existing forms and in-flight submissions keep working unchanged.
+function resolvePackage(raw: string): { packName: string; qty: number; price: number } {
+  if (raw.includes("|")) {
+    const [u, a, ...rest] = raw.split("|").map((s) => s.trim());
+    const uN = toNum(u), aN = toNum(a);
+    const qty = Number.isFinite(uN) && uN > 0 ? Math.round(uN) : 1;
+    const price = Number.isFinite(aN) && aN >= 0 ? aN : 0;
+    const name = rest.join("|").trim();
+    return { packName: name || `${qty} unit${qty > 1 ? "s" : ""}`, qty, price };
+  }
+  return parsePackage(raw);
 }
 
 const svc = { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` };
@@ -86,7 +106,7 @@ Deno.serve(async (req) => {
   }
 
   const pkgStr = asString(body.package);
-  const pkg = parsePackage(pkgStr);
+  const pkg = resolvePackage(pkgStr);
   const phone = asString(body.phone);
   const name = asString(body.name).trim();
 
