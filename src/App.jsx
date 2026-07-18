@@ -744,7 +744,7 @@ function PeriodFilter({ range, setRange, from, setFrom, to, setTo }) {
   return (
     <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", marginBottom: "12px" }}>
       <span className="cx-eyebrow" style={{ marginRight: "2px" }}>Period</span>
-      {[{ v: "today", l: "Today" }, { v: "week", l: "Week" }, { v: "month", l: "Month" }, { v: "30d", l: "30d" }, { v: "90d", l: "90d" }, { v: "all", l: "All time" }, { v: "custom", l: "Custom" }].map(r => (
+      {[{ v: "today", l: "Today" }, { v: "week", l: "Week" }, { v: "lastweek", l: "Last week" }, { v: "month", l: "Month" }, { v: "lastmonth", l: "Last month" }, { v: "30d", l: "30d" }, { v: "90d", l: "90d" }, { v: "all", l: "All time" }, { v: "custom", l: "Custom" }].map(r => (
         <button key={r.v} onClick={() => setRange(r.v)} style={{ padding: "5px 13px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, fontFamily: T.f, cursor: "pointer", border: "none", background: range === r.v ? T.accent : T.surface, color: range === r.v ? "#fff" : T.textMuted, boxShadow: range === r.v ? "none" : `0 0 0 1.5px ${T.border}` }}>{r.l}</button>
       ))}
       {range === "custom" && <>
@@ -828,8 +828,6 @@ export default function InfinistoresCRM() {
   const [queueMode, setQueueMode] = useState(true); // Phase 7: caller's focused queue vs all their orders
   const [dupeF, setDupeF] = useState(false);
   const [productF, setProductF] = useState("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const [statsRange, setStatsRange] = useState("all");
   const [statsFrom, setStatsFrom] = useState("");
   const [statsTo, setStatsTo] = useState("");
@@ -985,6 +983,23 @@ export default function InfinistoresCRM() {
     const d = {}; Object.values(pm).filter(v => v.length > 1).forEach(ids => ids.forEach(id => { d[id] = true; })); return d;
   }, [cOrders]);
 
+  // One date range drives BOTH the overview stats and the orders list below.
+  const periodRange = useMemo(() => {
+    if (statsRange === "all") return { from: null, to: null };
+    const now = new Date();
+    const monday = d => { const day = d.getDay(), diff = day === 0 ? 6 : day - 1; return new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff); };
+    let from = null, to = null;
+    if (statsRange === "today") from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    else if (statsRange === "week") from = monday(now);
+    else if (statsRange === "lastweek") { const m = monday(now); from = new Date(m.getFullYear(), m.getMonth(), m.getDate() - 7); to = new Date(m.getFullYear(), m.getMonth(), m.getDate() - 1, 23, 59, 59); }
+    else if (statsRange === "month") from = new Date(now.getFullYear(), now.getMonth(), 1);
+    else if (statsRange === "lastmonth") { from = new Date(now.getFullYear(), now.getMonth() - 1, 1); to = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59); }
+    else if (statsRange === "30d") from = new Date(now - 30 * 864e5);
+    else if (statsRange === "90d") from = new Date(now - 90 * 864e5);
+    else if (statsRange === "custom") { if (statsFrom) from = new Date(statsFrom); if (statsTo) to = new Date(statsTo + "T23:59:59"); }
+    return { from, to };
+  }, [statsRange, statsFrom, statsTo]);
+
   const filtered = useMemo(() => cOrders.filter(o => {
     if (statusF !== "all" && o.status !== statusF) return false;
     if (stateF !== "all" && o.state !== stateF) return false;
@@ -994,11 +1009,11 @@ export default function InfinistoresCRM() {
     if (callerF !== "all" && callerF !== "unassigned" && o.assigned_to !== callerF) return false;
     if (dupeF && !dupeMap[o.id]) return false;
     if (productF !== "all" && o.product !== productF) return false;
-    if (dateFrom) { const d = new Date(o.created_at); if (d < new Date(dateFrom)) return false; }
-    if (dateTo) { const d = new Date(o.created_at); if (d > new Date(dateTo + "T23:59:59")) return false; }
+    if (periodRange.from && new Date(o.created_at) < periodRange.from) return false;
+    if (periodRange.to && new Date(o.created_at) > periodRange.to) return false;
     if (search) { const s = search.toLowerCase(); return [o.name, cleanPhone(o.phone), o.address, o.state, o.product, o.notes].some(f => (f || "").toLowerCase().includes(s)); }
     return true;
-  }), [cOrders, statusF, stateF, agentF, callerF, dupeF, dateFrom, dateTo, search, dupeMap, productF]);
+  }), [cOrders, statusF, stateF, agentF, callerF, dupeF, periodRange, search, dupeMap, productF]);
 
   // Caller queue mode: only working statuses, oldest-first (work the backlog)
   const isCaller = me?.role === "caller";
@@ -1014,7 +1029,7 @@ export default function InfinistoresCRM() {
     return filtered;
   }, [filtered, isCaller, queueMode]);
 
-  useEffect(() => { setOrdersPage(0); }, [search, statusF, stateF, agentF, callerF, dupeF, productF, dateFrom, dateTo, country, queueMode]);
+  useEffect(() => { setOrdersPage(0); }, [search, statusF, stateF, agentF, callerF, dupeF, productF, periodRange, country, queueMode]);
 
   const pagedOrders = useMemo(() => viewOrders.slice(ordersPage * ordersPageSize, (ordersPage + 1) * ordersPageSize), [viewOrders, ordersPage, ordersPageSize]);
 
@@ -1022,32 +1037,15 @@ export default function InfinistoresCRM() {
   const productsList = useMemo(() => [...new Set(cOrders.map(o => o.product).filter(Boolean))].sort(), [cOrders]);
 
   const statsOrders = useMemo(() => {
-    if (statsRange === "all") return cOrders;
-    const now = new Date();
-    let from, to;
-    if (statsRange === "today") {
-      from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    } else if (statsRange === "week") {
-      const day = now.getDay();
-      const diff = day === 0 ? 6 : day - 1;
-      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
-    } else if (statsRange === "month") {
-      from = new Date(now.getFullYear(), now.getMonth(), 1);
-    } else if (statsRange === "30d") {
-      from = new Date(now - 30 * 24 * 60 * 60 * 1000);
-    } else if (statsRange === "90d") {
-      from = new Date(now - 90 * 24 * 60 * 60 * 1000);
-    } else if (statsRange === "custom") {
-      if (statsFrom) from = new Date(statsFrom);
-      if (statsTo) to = new Date(statsTo + "T23:59:59");
-    }
+    const { from, to } = periodRange;
+    if (!from && !to) return cOrders;
     return cOrders.filter(o => {
       const d = new Date(o.created_at);
       if (from && d < from) return false;
       if (to && d > to) return false;
       return true;
     });
-  }, [cOrders, statsRange, statsFrom, statsTo]);
+  }, [cOrders, periodRange]);
 
   const stats = useMemo(() => {
     const del = statsOrders.filter(o => o.status === "delivered");
@@ -1627,8 +1625,6 @@ export default function InfinistoresCRM() {
           <span className={`cx-sel ${agentF !== "all" ? "act" : ""}`}><select value={agentF} onChange={e => setAgentF(e.target.value)}><option value="all">All agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></span>
           {FEATURE_CALLER && !isCaller && callers.length > 0 && <span className={`cx-sel ${callerF !== "all" ? "act" : ""}`}><select value={callerF} onChange={e => setCallerF(e.target.value)}><option value="all">All callers</option><option value="unassigned">⚠ No caller</option>{callers.map(c => <option key={c.id} value={c.auth_user_id}>{c.full_name || c.email}</option>)}</select></span>}
           <span className={`cx-sel ${productF !== "all" ? "act" : ""}`}><select value={productF} onChange={e => setProductF(e.target.value)}><option value="all">All products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select></span>
-          <span className={`cx-sel ${dateFrom ? "act" : ""}`}><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" /></span>
-          <span className={`cx-sel ${dateTo ? "act" : ""}`}><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" /></span>
         </>}
         <Btn v={dupeF ? "warning" : "secondary"} sz="sm" onClick={() => setDupeF(!dupeF)}><Users size={14} />{dupeF ? "Dupes ✕" : "Dupes"}</Btn>
       </div>
@@ -1638,8 +1634,6 @@ export default function InfinistoresCRM() {
         <select value={stateF} onChange={e => setStateF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }}><option value="all">All {country === "ghana" ? "regions" : "states"}</option>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
         <select value={agentF} onChange={e => setAgentF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All agents</option><option value="unassigned">⚠ Unassigned</option>{cAgents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
         {FEATURE_CALLER && !isCaller && callers.length > 0 && <select value={callerF} onChange={e => setCallerF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All callers</option><option value="unassigned">⚠ No caller</option>{callers.map(c => <option key={c.id} value={c.auth_user_id}>{c.full_name || c.email}</option>)}</select>}
-        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
-        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
         <select value={productF} onChange={e => setProductF(e.target.value)} style={{ padding: "9px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, gridColumn: "1/-1" }}><option value="all">All products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select>
       </div></Card>}
 
