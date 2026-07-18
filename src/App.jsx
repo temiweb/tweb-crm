@@ -375,6 +375,20 @@ const T = {
   fd: "'Montserrat','DM Sans',sans-serif",
 };
 
+// Demand-relative stock signal shown on an order (state × product).
+// signal = { kind: "ok"|"short"|"none"|"noagent", supply, demand, state }
+function StockBadge({ signal }) {
+  if (!signal) return null;
+  const meta = {
+    ok:      { bg: T.accentLight, color: T.accentDark, text: `In stock · ${signal.supply}` },
+    short:   { bg: T.warningBg,   color: T.warning,    text: `Low · ${signal.supply} left, ${signal.demand} needed` },
+    none:    { bg: T.dangerBg,    color: T.danger,     text: "Out of stock" },
+    noagent: { bg: T.surfaceAlt,  color: T.textMuted,  text: `No agent in ${signal.state || "state"}` },
+  }[signal.kind];
+  if (!meta) return null;
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "11px", fontWeight: 700, color: meta.color, background: meta.bg, padding: "2px 8px", borderRadius: "6px", whiteSpace: "nowrap" }}><span style={{ width: "6px", height: "6px", borderRadius: "50%", background: meta.color, flexShrink: 0 }} />{meta.text}</span>;
+}
+
 // ═══════════════════════════════════════════════
 // DESIGN-SYSTEM CSS (v2) — scoped under .cx-app
 // ═══════════════════════════════════════════════
@@ -831,6 +845,7 @@ export default function InfinistoresCRM() {
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAssign, setShowAssign] = useState(null);
+  const [assignAll, setAssignAll] = useState(false);
   const [showStock, setShowStock] = useState(null);
   const [showAddWaybill, setShowAddWaybill] = useState(false);
   const [showAddPurchase, setShowAddPurchase] = useState(false);
@@ -1084,6 +1099,51 @@ export default function InfinistoresCRM() {
       revenue: vals.reduce((s, v) => s + v.revenue, 0),
     };
   }, [agentSt]);
+
+  // ── Stock vs demand, keyed by state (demand-relative low-stock signals) ──
+  // Supply = stock held by agents who cover a state. An agent covering two
+  // states counts toward both (they share one pool) — surfaced as a note.
+  const stockByState = useMemo(() => {
+    const m = {};
+    cAgents.forEach(a => (a.states || []).forEach(st => { (m[st] = m[st] || { agents: [], stock: {} }).agents.push(a); }));
+    cAgents.forEach(a => {
+      const sts = a.states || [];
+      if (!sts.length) return;
+      inventory.filter(i => i.agent_id === a.id).forEach(i => sts.forEach(st => { if (m[st]) m[st].stock[i.product_name] = (m[st].stock[i.product_name] || 0) + (i.qty || 0); }));
+    });
+    return m;
+  }, [cAgents, inventory]);
+
+  // Demand = units on open orders ("in progress" group) per state × product.
+  const demandByState = useMemo(() => {
+    const m = {};
+    cOrders.forEach(o => {
+      if (getStatus(o.status).group !== "progress" || !o.state || !o.product) return;
+      (m[o.state] = m[o.state] || {})[o.product] = (m[o.state][o.product] || 0) + (o.qty || 0);
+    });
+    return m;
+  }, [cOrders]);
+
+  const stockSignal = (o) => {
+    const cover = stockByState[o.state];
+    if (!cover || !cover.agents.length) return { kind: "noagent", state: o.state };
+    const supply = cover.stock[o.product] || 0;
+    const demand = (demandByState[o.state] || {})[o.product] || 0;
+    return { kind: supply === 0 ? "none" : supply < demand ? "short" : "ok", supply, demand, state: o.state };
+  };
+
+  // Every state × product where open demand outruns stock (or no agent covers it).
+  const stockShortfalls = useMemo(() => {
+    const rows = [];
+    Object.entries(demandByState).forEach(([st, prods]) => Object.entries(prods).forEach(([prod, demand]) => {
+      const cover = stockByState[st];
+      const hasAgent = !!cover?.agents.length;
+      const supply = cover?.stock[prod] || 0;
+      if (hasAgent && supply >= demand) return;
+      rows.push({ state: st, product: prod, supply, demand, shortfall: demand - supply, hasAgent });
+    }));
+    return rows.sort((a, b) => b.shortfall - a.shortfall);
+  }, [demandByState, stockByState]);
 
   // Phase 7: per-caller effectiveness (over the selected stats period)
   const callerStats = useMemo(() => callers.map(c => {
@@ -1531,6 +1591,19 @@ export default function InfinistoresCRM() {
         </div>
       </Card>}
 
+      {cAgents.length > 0 && stockShortfalls.length > 0 && <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.dangerBg, border: `1.5px solid #f5c2c2` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}><AlertTriangle size={16} style={{ color: T.danger }} /><span style={{ fontWeight: 700, color: T.danger, fontSize: "13px" }}>Stock won't cover pending orders in {stockShortfalls.length} spot{stockShortfalls.length !== 1 ? "s" : ""}</span></div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+          {stockShortfalls.slice(0, 8).map(r => (
+            <button key={`${r.state}|${r.product}`} onClick={() => { setStateF(r.state); setStatusF("all"); }} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "7px 11px", cursor: "pointer", fontFamily: T.f, textAlign: "left" }}>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: T.text }}>{r.state} · {r.product}</span>
+              <span style={{ fontSize: "11px", color: T.textMuted, whiteSpace: "nowrap" }}>{r.hasAgent ? <>{r.supply} in stock · {r.demand} needed <b style={{ color: T.danger }}>(short {r.shortfall})</b></> : <b style={{ color: T.danger }}>no agent covers this state</b>}</span>
+            </button>
+          ))}
+        </div>
+        {cAgents.some(a => (a.states || []).length > 1) && <div style={{ fontSize: "10px", color: T.textMuted, marginTop: "8px" }}>ⓘ Some agents cover multiple states; their stock is counted toward each.</div>}
+      </Card>}
+
       <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>
         <div className="cx-searchbar" style={{ maxWidth: "300px", flex: 1, minWidth: "180px" }}>
           <Search size={15} />
@@ -1586,6 +1659,7 @@ export default function InfinistoresCRM() {
                 <span className="cx-num" style={{ fontWeight: 700, fontSize: "14px", flexShrink: 0 }}>{cur}{(o.price || 0).toLocaleString()}</span>
               </div>
               <div style={{ fontSize: "12px", color: T.textMuted, marginBottom: "8px" }}>{cleanPhone(o.phone)} · {o.state} · {o.product} ×{o.qty}</div>
+              {cAgents.length > 0 && getStatus(o.status).group === "progress" && <div style={{ marginBottom: "8px" }}><StockBadge signal={stockSignal(o)} /></div>}
               <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                 {canEditOrders ? <StatusSelect value={o.status} onChange={e => { e.stopPropagation(); doUpdateStatus(o.id, e.target.value); }} /> : <Pill status={o.status} />}
                 {o.agent_name ? <span style={{ fontSize: "11px", color: T.textMuted, background: T.surfaceAlt, padding: "3px 8px", borderRadius: "6px" }}>{o.agent_name}</span> : canEditOrders ? <Btn v="ghost" sz="xs" onClick={e => { e.stopPropagation(); setShowAssign(o.id); }} style={{ color: T.accent }}>+ Assign</Btn> : null}
@@ -1622,7 +1696,7 @@ export default function InfinistoresCRM() {
                     <div style={{ fontWeight: 600, fontSize: "13px", color: T.text }}>{o.product}</div>
                     <div style={{ fontSize: "11px", color: T.textMuted, marginTop: "1px" }}>{o.pack_name} · ×{o.qty}</div>
                   </td>
-                  <td style={{ fontSize: "12px", color: T.textMuted }}>{o.state}</td>
+                  <td style={{ fontSize: "12px", color: T.textMuted }}>{o.state}{cAgents.length > 0 && getStatus(o.status).group === "progress" && <div style={{ marginTop: "4px" }}><StockBadge signal={stockSignal(o)} /></div>}</td>
                   <td>{canEditOrders ? <StatusSelect value={o.status} onChange={e => doUpdateStatus(o.id, e.target.value)} /> : <Pill status={o.status} />}</td>
                   <td>{o.agent_name ? <span style={{ fontSize: "12px", fontWeight: 600, background: T.surfaceAlt, padding: "3px 9px", borderRadius: "6px" }}>{o.agent_name}</span> : canEditOrders ? <Btn v="ghost" sz="xs" onClick={() => setShowAssign(o.id)} style={{ color: T.accent }}>+ Assign</Btn> : <span style={{ color: T.textLight, fontSize: "12px" }}>—</span>}</td>
                   <td className="r">
@@ -1960,6 +2034,7 @@ export default function InfinistoresCRM() {
             <div style={{ gridColumn: "1/-1" }}><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Address</div><div style={{ fontSize: "13px" }}>{o.address}</div></div>
             <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Product</div><div style={{ fontWeight: 700 }}>{o.product} — {o.pack_name} (×{o.qty})</div></div>
             <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Price</div><div className="cx-num" style={{ fontWeight: 800, fontSize: "16px" }}>{cur}{(o.price || 0).toLocaleString()}</div></div>
+            {cAgents.length > 0 && <div style={{ gridColumn: "1/-1" }}><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700, marginBottom: "3px" }}>Stock in {o.state || "state"}</div><StockBadge signal={stockSignal(o)} /></div>}
             {(deliveryDateOf(o) || o.delivery_pref) && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Delivery date</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{fmtDate(deliveryDateOf(o)) || o.delivery_pref}</div></div>}
             {o.payment_option && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Payment</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.payment_option}</div></div>}
             {FEATURE_CALLER && !isCaller && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Caller</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.assigned_to ? (staffByUid[o.assigned_to]?.full_name || staffByUid[o.assigned_to]?.email || "Assigned") : "— Unassigned —"}</div></div>}
@@ -2015,10 +2090,30 @@ export default function InfinistoresCRM() {
         </div>}
       </Modal>
 
-      <Modal open={!!showAssign} onClose={() => setShowAssign(null)} title="Assign agent">
-        {cAgents.length === 0 ? <p style={{ color: T.textMuted, textAlign: "center", padding: "20px" }}>No agents yet.</p> : <div style={{ display: "grid", gap: "6px" }}>
-          {cAgents.map(a => <button key={a.id} onClick={() => doAssign(showAssign, a.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: T.surfaceAlt, border: `1.5px solid ${T.border}`, borderRadius: T.r, cursor: "pointer", fontFamily: T.f, width: "100%", textAlign: "left" }}><div><div style={{ fontWeight: 700 }}>{a.name}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{(a.states || []).join(", ")}</div></div><span className="cx-num" style={{ fontWeight: 800, color: T.accent }}>{agentSt[a.id]?.rate || "—"}%</span></button>)}
-        </div>}
+      <Modal open={!!showAssign} onClose={() => { setShowAssign(null); setAssignAll(false); }} title="Assign agent">
+        {(() => {
+          if (cAgents.length === 0) return <p style={{ color: T.textMuted, textAlign: "center", padding: "20px" }}>No agents yet.</p>;
+          const order = orders.find(o => o.id === showAssign);
+          const oState = order?.state || "", oProduct = order?.product || "", need = order?.qty || 1;
+          const covering = cAgents.filter(a => (a.states || []).includes(oState));
+          const showList = assignAll || covering.length === 0 ? cAgents : covering;
+          const stockOf = a => inventory.filter(i => i.agent_id === a.id && i.product_name === oProduct).reduce((s, i) => s + i.qty, 0);
+          return <div style={{ display: "grid", gap: "6px" }}>
+            <div style={{ fontSize: "12px", color: T.textMuted, marginBottom: "2px" }}>
+              {covering.length > 0 && !assignAll ? <>Agents covering <b style={{ color: T.text }}>{oState}</b></> : <>All agents{oState && covering.length === 0 ? <> · <span style={{ color: T.danger, fontWeight: 700 }}>none cover {oState}</span></> : null}</>}
+            </div>
+            {showList.map(a => { const stk = stockOf(a); return (
+              <button key={a.id} onClick={() => doAssign(showAssign, a.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: T.surfaceAlt, border: `1.5px solid ${T.border}`, borderRadius: T.r, cursor: "pointer", fontFamily: T.f, width: "100%", textAlign: "left" }}>
+                <div><div style={{ fontWeight: 700 }}>{a.name}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{(a.states || []).join(", ") || "no states set"}</div></div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 700, fontSize: "12px", color: stk === 0 ? T.danger : stk < need ? T.warning : T.accent }}>{stk} in stock</div>
+                  <div className="cx-num" style={{ fontSize: "11px", color: T.textMuted }}>{agentSt[a.id]?.rate ?? "—"}% delivered</div>
+                </div>
+              </button>
+            ); })}
+            {covering.length > 0 && <button onClick={() => setAssignAll(v => !v)} style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontFamily: T.f, fontSize: "12px", fontWeight: 700, padding: "6px" }}>{assignAll ? `Show only agents in ${oState}` : "Show all agents (other states)"}</button>}
+          </div>;
+        })()}
       </Modal>
 
       <Modal open={showAddAgent} onClose={() => setShowAddAgent(false)} title="Add agent">
