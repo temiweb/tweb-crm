@@ -846,6 +846,7 @@ export default function InfinistoresCRM() {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAssign, setShowAssign] = useState(null);
   const [assignAll, setAssignAll] = useState(false);
+  const [editAgent, setEditAgent] = useState(null);
   const [showStock, setShowStock] = useState(null);
   const [showAddWaybill, setShowAddWaybill] = useState(false);
   const [showAddPurchase, setShowAddPurchase] = useState(false);
@@ -1320,6 +1321,13 @@ export default function InfinistoresCRM() {
     try { await sb.delete("agents", { id }); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
+  const doEditAgent = async (data) => {
+    const id = editAgent.id;
+    setAgents(prev => prev.map(a => a.id === id ? { ...a, ...data } : a));
+    setEditAgent(null);
+    try { await sb.update("agents", { id }, data); } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
   const doAddProduct = async (name) => {
     try { await sb.insert("products", { name }); await loadAll(); } catch (err) { showToast(err.message); }
     setShowAddProduct(false);
@@ -1755,6 +1763,7 @@ export default function InfinistoresCRM() {
             </div>
             <div style={{ display: "flex", gap: "6px" }}>
               <Btn v="secondary" sz="sm" onClick={() => setShowStock(a.id)} style={{ flex: 1, justifyContent: "center" }}><Boxes size={14} />{caps.inventory === "edit" ? "Manage stock" : "View stock"}</Btn>
+              {caps.agents === "edit" && <Btn v="secondary" sz="sm" onClick={() => setEditAgent(a)}><Pencil size={14} />Edit</Btn>}
               {caps.agents === "edit" && <Btn v="ghost" sz="sm" onClick={() => doDeleteAgent(a.id)} style={{ color: T.danger }}><Trash2 size={14} /></Btn>}
             </div>
           </Card>
@@ -2117,7 +2126,11 @@ export default function InfinistoresCRM() {
       </Modal>
 
       <Modal open={showAddAgent} onClose={() => setShowAddAgent(false)} title="Add agent">
-        <AgentForm onSubmit={doAddAgent} country={country} />
+        <AgentForm onSubmit={doAddAgent} country={country} knownStates={states} />
+      </Modal>
+
+      <Modal open={!!editAgent} onClose={() => setEditAgent(null)} title="Edit agent">
+        {editAgent && <AgentForm key={editAgent.id} agent={editAgent} onSubmit={doEditAgent} country={country} knownStates={states} />}
       </Modal>
 
       <Modal open={showAddProduct} onClose={() => setShowAddProduct(false)} title="Add product">
@@ -2253,9 +2266,26 @@ export default function InfinistoresCRM() {
 // FORM COMPONENTS
 // ═══════════════════════════════════════════════
 
-function AgentForm({ onSubmit, country }) {
-  const [n, sN] = useState(""); const [p, sP] = useState(""); const [s, sS] = useState("");
-  return <div><Inp label="Name" value={n} onChange={e => sN(e.target.value)} /><Inp label="Phone" value={p} onChange={e => sP(e.target.value)} /><Inp label={`${country === "ghana" ? "Regions" : "States"} (comma-separated)`} value={s} onChange={e => sS(e.target.value)} /><Btn onClick={() => { if (n) onSubmit({ name: n, phone: p, states: s.split(",").map(x => x.trim()).filter(Boolean) }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Add agent</Btn></div>;
+function AgentForm({ onSubmit, country, agent, knownStates = [] }) {
+  const [n, sN] = useState(agent?.name || "");
+  const [p, sP] = useState(agent?.phone || "");
+  const [s, sS] = useState((agent?.states || []).join(", "));
+  const label = country === "ghana" ? "region" : "state";
+  const current = s.split(",").map(x => x.trim()).filter(Boolean);
+  const addState = st => sS(current.includes(st) ? s : [...current, st].join(", "));
+  const missing = knownStates.filter(st => !current.includes(st));
+  return <div>
+    <Inp label="Name" value={n} onChange={e => sN(e.target.value)} />
+    <Inp label="Phone" value={p} onChange={e => sP(e.target.value)} />
+    <Inp label={`${country === "ghana" ? "Regions" : "States"} (comma-separated)`} value={s} onChange={e => sS(e.target.value)} />
+    {missing.length > 0 && <div style={{ marginTop: "-4px", marginBottom: "10px" }}>
+      <div style={{ fontSize: "10px", color: T.textMuted, marginBottom: "5px" }}>Tap a {label} from your orders to add it exactly as spelt:</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+        {missing.map(st => <button key={st} type="button" onClick={() => addState(st)} style={{ fontSize: "11px", background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "3px 8px", cursor: "pointer", fontFamily: T.f, color: T.text }}>+ {st}</button>)}
+      </div>
+    </div>}
+    <Btn onClick={() => { if (n) onSubmit({ name: n, phone: p, states: current }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{agent ? "Save changes" : "Add agent"}</Btn>
+  </div>;
 }
 
 function ProductForm({ onSubmit }) {
