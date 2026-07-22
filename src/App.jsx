@@ -1179,6 +1179,38 @@ export default function InfinistoresCRM() {
   // Phase 7: stale in-transit orders (dispatched > STALE_HOURS ago)
   const staleOrders = useMemo(() => cOrders.filter(o => o.status === "in_transit" && o.dispatched_at && (Date.now() - new Date(o.dispatched_at).getTime()) > STALE_HOURS * 3600 * 1000), [cOrders]);
 
+  // Monthly trend (last 6 months) — always all-time, independent of the period pills.
+  const monthlyTrend = useMemo(() => {
+    const m = {};
+    cOrders.forEach(o => {
+      const key = (o.created_at || "").slice(0, 7); // YYYY-MM
+      if (!key) return;
+      const b = m[key] = m[key] || { key, orders: 0, delivered: 0, rev: 0 };
+      b.orders++;
+      if (o.status === "delivered") { b.delivered++; b.rev += (o.actual_price_collected || o.price || 0); }
+    });
+    return Object.values(m).sort((a, b) => a.key.localeCompare(b.key)).slice(-6);
+  }, [cOrders]);
+
+  // This-month-to-date vs same span of last month (fair like-for-like).
+  const momCompare = useMemo(() => {
+    const now = new Date();
+    const thisFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevMonthDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+    const lastFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastTo = new Date(now.getFullYear(), now.getMonth() - 1, Math.min(now.getDate(), prevMonthDays), now.getHours(), now.getMinutes(), now.getSeconds());
+    const calc = (from, to) => {
+      const os = cOrders.filter(o => { const d = new Date(o.created_at); return d >= from && d <= to; });
+      const del = os.filter(o => o.status === "delivered");
+      return { orders: os.length, delivered: del.length, rate: os.length ? Math.round(del.length / os.length * 100) : 0, rev: del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0) };
+    };
+    return { now: calc(thisFrom, now), prev: calc(lastFrom, lastTo) };
+  }, [cOrders]);
+
+  // Agents ranked by delivery rate for the selected period (idle = holds stock, delivered nothing).
+  const agentLeaderboard = useMemo(() => cAgents.map(a => ({ a, s: agentSt[a.id] || {} }))
+    .sort((x, y) => (parseInt(y.s.rate) || -1) - (parseInt(x.s.rate) || -1)), [cAgents, agentSt]);
+
   // ── Exports (respect the current filters + period, so "export what I see") ──
   const stamp = () => new Date().toISOString().slice(0, 10);
   const exportOrders = () => {
@@ -1966,6 +1998,45 @@ export default function InfinistoresCRM() {
       </div>
       {statsStrip}
 
+      <Card style={{ padding: "18px", marginBottom: "14px" }}>
+        <div className="cx-section-t" style={{ marginBottom: "12px" }}>This month vs last month <span className="cx-sub" style={{ marginLeft: "6px" }}>· to the same point in the month</span></div>
+        <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: "10px" }}>
+          {[
+            { l: "Orders", now: momCompare.now.orders, prev: momCompare.prev.orders },
+            { l: "Delivered", now: momCompare.now.delivered, prev: momCompare.prev.delivered },
+            { l: "Delivery rate", now: momCompare.now.rate, prev: momCompare.prev.rate, pct: true },
+            { l: "Revenue", now: momCompare.now.rev, prev: momCompare.prev.rev, money: true },
+          ].map(k => {
+            const diff = k.now - k.prev, up = diff >= 0;
+            const chg = k.pct ? `${Math.abs(diff)} pts` : `${Math.abs(k.prev ? Math.round(diff / k.prev * 100) : (k.now ? 100 : 0))}%`;
+            const val = n => `${k.money ? cur : ""}${(n || 0).toLocaleString()}${k.pct ? "%" : ""}`;
+            return <div key={k.l} style={{ padding: "12px 14px", background: T.surfaceAlt, borderRadius: T.r }}>
+              <div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>{k.l}</div>
+              <div className="cx-num" style={{ fontSize: "20px", fontWeight: 800 }}>{val(k.now)}</div>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: diff === 0 ? T.textMuted : up ? T.accent : T.danger }}>{diff === 0 ? "—" : up ? "▲" : "▼"} {chg} <span style={{ color: T.textMuted, fontWeight: 500 }}>vs {val(k.prev)}</span></div>
+            </div>;
+          })}
+        </div>
+      </Card>
+
+      <Card style={{ padding: "18px", marginBottom: "14px" }}>
+        <div className="cx-section-t" style={{ marginBottom: "14px" }}>Trend — last {monthlyTrend.length} month{monthlyTrend.length !== 1 ? "s" : ""}</div>
+        {monthlyTrend.length === 0 ? <div style={{ color: T.textMuted, fontSize: "13px" }}>No data yet.</div> : (() => {
+          const maxOrders = Math.max(...monthlyTrend.map(m => m.orders), 1);
+          return <div style={{ display: "flex", alignItems: "flex-end", gap: isMobile ? "6px" : "14px", height: "170px" }}>
+            {monthlyTrend.map(m => <div key={m.key} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", height: "100%", justifyContent: "flex-end" }}>
+              <div style={{ fontSize: "10px", color: T.textMuted, fontWeight: 700 }}>{cur}{(m.rev / 1000).toFixed(0)}k</div>
+              <div title={`${m.orders} orders · ${m.delivered} delivered · ${m.orders ? Math.round(m.delivered / m.orders * 100) : 0}%`} style={{ width: "100%", maxWidth: "48px", background: T.surfaceAlt, borderRadius: "6px 6px 0 0", height: `${m.orders / maxOrders * 100}%`, minHeight: "4px", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                <div style={{ background: T.accent, borderRadius: "6px 6px 0 0", height: `${m.orders ? m.delivered / m.orders * 100 : 0}%`, minHeight: m.delivered > 0 ? "3px" : 0 }} />
+              </div>
+              <div className="cx-num" style={{ fontSize: "11px", fontWeight: 800 }}>{m.orders}</div>
+              <div style={{ fontSize: "9px", color: T.textMuted }}>{new Date(m.key + "-01").toLocaleDateString(undefined, { month: "short", year: "2-digit" })}</div>
+            </div>)}
+          </div>;
+        })()}
+        <div style={{ display: "flex", gap: "14px", marginTop: "12px", fontSize: "10px", color: T.textMuted, flexWrap: "wrap" }}><span><i style={{ display: "inline-block", width: "9px", height: "9px", background: T.accent, borderRadius: "2px", marginRight: "4px" }} />Delivered</span><span><i style={{ display: "inline-block", width: "9px", height: "9px", background: T.surfaceAlt, borderRadius: "2px", marginRight: "4px" }} />Total orders</span><span>Top figure = revenue collected</span></div>
+      </Card>
+
       {FEATURE_CALLER && callers.length > 0 && <Card style={{ overflow: "hidden", marginBottom: "14px" }}>
         <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Caller effectiveness</span><span className="cx-sub" style={{ marginLeft: "8px" }}>of the orders given to each caller, where did they land</span></div>
         <div style={{ overflowX: "auto" }}><table className="cx-table">
@@ -1986,6 +2057,25 @@ export default function InfinistoresCRM() {
           </tbody>
         </table></div>
         <div style={{ padding: "8px 16px", fontSize: "11px", color: T.textMuted, borderTop: `1px solid ${T.borderLight}` }}>Lost on call = phone-skill signal (caller-influenced). Lost at delivery = more about the agent/area.</div>
+      </Card>}
+
+      {cAgents.length > 0 && <Card style={{ overflow: "hidden", marginBottom: "14px" }}>
+        <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Agent leaderboard</span><span className="cx-sub" style={{ marginLeft: "8px" }}>for the selected period · idle = holding stock, delivered nothing</span></div>
+        <div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Agent</th><th className="r">Assigned</th><th className="r">Delivered</th><th>Delivery rate</th><th className="r">Stock</th><th className="r">Revenue</th></tr></thead>
+          <tbody>
+            {agentLeaderboard.map(({ a, s }) => { const rn = parseInt(s.rate); const idle = (s.stock || 0) > 0 && (s.delivered || 0) === 0; return (
+              <tr key={a.id}>
+                <td className="cx-cust"><b>{a.name}</b>{idle && <span style={{ fontSize: "10px", color: T.warning, fontWeight: 700, marginLeft: "6px", background: T.warningBg, padding: "1px 6px", borderRadius: "5px" }}>IDLE STOCK</span>}</td>
+                <td className="r cx-num">{s.total || 0}</td>
+                <td className="r cx-num" style={{ fontWeight: 700, color: T.accent }}>{s.delivered || 0}</td>
+                <td><div style={{ display: "flex", alignItems: "center", gap: "8px" }}><div style={{ flex: 1, maxWidth: "90px", background: T.surfaceAlt, borderRadius: "5px", height: "8px", overflow: "hidden" }}><div style={{ width: `${isNaN(rn) ? 0 : rn}%`, height: "100%", background: rn >= 60 ? T.accent : rn >= 40 ? T.warning : T.danger }} /></div><span className="cx-num" style={{ fontSize: "12px", fontWeight: 700 }}>{s.rate == null || s.rate === "-" ? "—" : s.rate + "%"}</span></div></td>
+                <td className="r cx-num" style={{ color: idle ? T.warning : T.text }}>{s.stock || 0}</td>
+                <td className="r cx-num">{cur}{(s.revenue || 0).toLocaleString()}</td>
+              </tr>
+            ); })}
+          </tbody>
+        </table></div>
       </Card>}
 
       {/* signature delivery funnel */}
