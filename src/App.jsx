@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ClipboardList, Boxes, Truck, MessageSquare,
   Search, Bell, ChevronDown, PanelLeftClose, PanelLeftOpen,
   Phone, MessageCircle, Plus, ArrowUpRight, ArrowDownRight,
-  Store, RefreshCw, LogOut, Upload, Users, Pencil, Trash2, X,
+  Store, RefreshCw, LogOut, Upload, Download, Users, Pencil, Trash2, X,
   Package, TrendingUp, Wallet, CheckCircle2, Clock, Filter,
   Copy, UserPlus, AlertTriangle
 } from "lucide-react";
@@ -387,6 +387,26 @@ function StockBadge({ signal }) {
   }[signal.kind];
   if (!meta) return null;
   return <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "11px", fontWeight: 700, color: meta.color, background: meta.bg, padding: "2px 8px", borderRadius: "6px", whiteSpace: "nowrap" }}><span style={{ width: "6px", height: "6px", borderRadius: "50%", background: meta.color, flexShrink: 0 }} />{meta.text}</span>;
+}
+
+// ── CSV export (dependency-free; opens in Excel / Google Sheets) ──
+function csvCell(v) {
+  const s = v == null ? "" : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function toCSV(columns, rows) {
+  const head = columns.map(c => csvCell(c.label)).join(",");
+  const body = rows.map(r => columns.map(c => csvCell(c.get(r))).join(",")).join("\n");
+  return head + "\n" + body;
+}
+function downloadCSV(filename, csv) {
+  // Leading BOM so Excel reads UTF-8 (naira sign, accented names) correctly.
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ═══════════════════════════════════════════════
@@ -1068,10 +1088,12 @@ export default function InfinistoresCRM() {
     return { placed, reached, delivered, neverReached, failed: failedG, inProgress };
   }, [statsOrders]);
 
+  // Order-derived numbers follow the selected period (statsOrders); live
+  // stock stays current (from inventory, not time-scoped).
   const agentSt = useMemo(() => {
     const m = {};
     cAgents.forEach(a => {
-      const ao = cOrders.filter(o => o.agent_id === a.id);
+      const ao = statsOrders.filter(o => o.agent_id === a.id);
       const del = ao.filter(o => o.status === "delivered");
       const inTransit = ao.filter(o => o.status === "in_transit").length;
       const cancelled = ao.filter(o => o.status === "cancelled" || o.status === "rejected").length;
@@ -1085,7 +1107,7 @@ export default function InfinistoresCRM() {
       };
     });
     return m;
-  }, [cAgents, cOrders, inventory]);
+  }, [cAgents, statsOrders, inventory]);
 
   const agentTotals = useMemo(() => {
     const vals = Object.values(agentSt);
@@ -1156,6 +1178,48 @@ export default function InfinistoresCRM() {
 
   // Phase 7: stale in-transit orders (dispatched > STALE_HOURS ago)
   const staleOrders = useMemo(() => cOrders.filter(o => o.status === "in_transit" && o.dispatched_at && (Date.now() - new Date(o.dispatched_at).getTime()) > STALE_HOURS * 3600 * 1000), [cOrders]);
+
+  // ── Exports (respect the current filters + period, so "export what I see") ──
+  const stamp = () => new Date().toISOString().slice(0, 10);
+  const exportOrders = () => {
+    const cols = [
+      { label: "Date", get: o => (o.created_at || "").slice(0, 10) },
+      { label: "Name", get: o => o.name },
+      { label: "Phone", get: o => cleanPhone(o.phone) },
+      { label: "WhatsApp", get: o => cleanPhone(o.whatsapp) },
+      { label: country === "ghana" ? "Region" : "State", get: o => o.state },
+      { label: "Address", get: o => o.address },
+      { label: "Product", get: o => o.product },
+      { label: "Package", get: o => o.pack_name },
+      { label: "Qty", get: o => o.qty },
+      { label: "Price", get: o => o.price },
+      { label: "Status", get: o => getStatus(o.status).label },
+      { label: "Agent", get: o => o.agent_name },
+      { label: "Delivery fee", get: o => o.delivery_fee },
+      { label: "Qty delivered", get: o => o.actual_qty_delivered },
+      { label: "Collected", get: o => o.actual_price_collected },
+      { label: "Delivery date", get: o => o.delivery_date || "" },
+      { label: "Payment", get: o => o.payment_option },
+      { label: "Caller", get: o => o.assigned_to ? (staffByUid[o.assigned_to]?.full_name || staffByUid[o.assigned_to]?.email || "") : "" },
+      { label: "Notes", get: o => o.notes },
+    ];
+    downloadCSV(`orders-${country}-${stamp()}.csv`, toCSV(cols, viewOrders));
+  };
+  const exportAgents = () => {
+    const cols = [
+      { label: "Agent", get: a => a.name },
+      { label: "Phone", get: a => cleanPhone(a.phone) },
+      { label: country === "ghana" ? "Regions" : "States", get: a => (a.states || []).join("; ") },
+      { label: "Assigned", get: a => agentSt[a.id]?.total || 0 },
+      { label: "Delivered", get: a => agentSt[a.id]?.delivered || 0 },
+      { label: "Delivery rate %", get: a => agentSt[a.id]?.rate ?? "-" },
+      { label: "In transit", get: a => agentSt[a.id]?.inTransit || 0 },
+      { label: "Cancelled/failed", get: a => (agentSt[a.id]?.cancelled || 0) + (agentSt[a.id]?.failed || 0) },
+      { label: "Stock in field", get: a => agentSt[a.id]?.stock || 0 },
+      { label: "Revenue delivered", get: a => agentSt[a.id]?.revenue || 0 },
+    ];
+    downloadCSV(`agents-${country}-${stamp()}.csv`, toCSV(cols, cAgents));
+  };
 
   // ─── DB ACTIONS ───
   // Best-effort status history (won't block or error the status change if the
@@ -1583,6 +1647,7 @@ export default function InfinistoresCRM() {
       <div className="cx-head">
         <div><h1 className="cx-h1">Orders</h1><div className="cx-sub">Confirm, assign and track every order</div></div>
         <div style={{ display: "flex", gap: "8px" }}>
+          {caps.analytics && <Btn v="secondary" onClick={exportOrders}><Download size={15} />Export</Btn>}
           {caps.del && <Btn v="secondary" onClick={() => setShowImport(true)}><Upload size={15} />Import CSV</Btn>}
           {caps.del && <Btn onClick={() => setShowAddOrder(true)}><Plus size={16} />New order</Btn>}
         </div>
@@ -1724,8 +1789,12 @@ export default function InfinistoresCRM() {
     <div>
       <div className="cx-head">
         <div><h1 className="cx-h1">Agents</h1><div className="cx-sub">Delivery agents and their performance</div></div>
-        {caps.agents === "edit" && <Btn onClick={() => setShowAddAgent(true)}><Plus size={16} />Add agent</Btn>}
+        <div style={{ display: "flex", gap: "8px" }}>
+          {cAgents.length > 0 && <Btn v="secondary" onClick={exportAgents}><Download size={15} />Export</Btn>}
+          {caps.agents === "edit" && <Btn onClick={() => setShowAddAgent(true)}><Plus size={16} />Add agent</Btn>}
+        </div>
       </div>
+      {cAgents.length > 0 && <PeriodFilter range={statsRange} setRange={setStatsRange} from={statsFrom} setFrom={setStatsFrom} to={statsTo} setTo={setStatsTo} />}
       {cAgents.length > 0 && <div className="cx-grid cx-kpis" style={{ marginBottom: "16px" }}>
         <KPI accent="#1a7a4c" v={agentTotals.assigned} l="Total assigned" icon={ClipboardList} />
         <KPI accent="#1d4ed8" v={agentTotals.delivered} l="Delivered" icon={CheckCircle2} />
@@ -1964,6 +2033,22 @@ export default function InfinistoresCRM() {
           {states.map(st => { const so = statsOrders.filter(o => o.state === st); const d = so.filter(o => o.status === "delivered").length; const p = statsOrders.length > 0 ? so.length / statsOrders.length * 100 : 0; return (
             <div key={st} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px" }}><span style={{ width: isMobile ? "90px" : "150px", fontSize: "11px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st}</span><div style={{ flex: 1, background: T.surfaceAlt, borderRadius: "4px", height: "14px", overflow: "hidden" }}><div style={{ width: `${p}%`, background: T.accent, height: "100%", borderRadius: "4px", minWidth: so.length > 0 ? "2px" : 0 }} /></div><span className="cx-num" style={{ width: "25px", textAlign: "right", fontWeight: 800, fontSize: "12px" }}>{so.length}</span><span style={{ width: "50px", textAlign: "right", fontSize: "10px", color: T.textMuted }}>{d} done</span></div>
           ); })}
+        </Card>
+        <Card style={{ padding: "18px", gridColumn: isMobile ? "auto" : "1/-1" }}>
+          <div className="cx-section-t" style={{ marginBottom: "12px" }}>By product</div>
+          {(() => {
+            const prods = [...new Set(statsOrders.map(o => o.product).filter(Boolean))];
+            if (prods.length === 0) return <div style={{ color: T.textMuted, fontSize: "13px" }}>No data yet.</div>;
+            const rows = prods.map(p => {
+              const po = statsOrders.filter(o => o.product === p);
+              const del = po.filter(o => o.status === "delivered");
+              return { p, orders: po.length, delivered: del.length, rate: po.length ? Math.round(del.length / po.length * 100) : 0, units: del.reduce((s, o) => s + (o.actual_qty_delivered || o.qty || 0), 0), rev: del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0) };
+            }).sort((a, b) => b.rev - a.rev);
+            const maxRev = Math.max(...rows.map(r => r.rev), 1);
+            return rows.map(r => (
+              <div key={r.p} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}><span style={{ width: isMobile ? "90px" : "160px", fontSize: "11px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.p}</span><div style={{ flex: 1, background: T.surfaceAlt, borderRadius: "4px", height: "14px", overflow: "hidden" }}><div style={{ width: `${r.rev / maxRev * 100}%`, background: T.accent, height: "100%", borderRadius: "4px", minWidth: r.rev > 0 ? "2px" : 0 }} /></div><span className="cx-num" style={{ width: "90px", textAlign: "right", fontSize: "11px", fontWeight: 700 }}>{cur}{r.rev.toLocaleString()}</span><span style={{ width: isMobile ? "58px" : "110px", textAlign: "right", fontSize: "10px", color: T.textMuted }}>{r.delivered}/{r.orders} · {r.rate}%{!isMobile && ` · ${r.units}u`}</span></div>
+            ));
+          })()}
         </Card>
       </div>
     </div>
