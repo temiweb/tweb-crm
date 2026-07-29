@@ -277,9 +277,11 @@ function cleanPhone(p) {
 }
 
 function waLink(phone, msg, country) {
+  const cc = country === "ghana" ? "233" : "234";
+  const natLen = country === "ghana" ? 9 : 10; // national number length once the leading 0 is dropped
   let p = cleanPhone(phone);
-  if (country === "ghana") { if (p.startsWith("0")) p = "233" + p.slice(1); }
-  else { if (p.startsWith("0")) p = "234" + p.slice(1); }
+  if (p.startsWith("0")) p = cc + p.slice(1);                  // 0805… → 234805…
+  else if (!p.startsWith(cc) && p.length === natLen) p = cc + p; // bare 8054377777 → 2348054377777
   return `https://wa.me/${p}?text=${encodeURIComponent(msg)}`;
 }
 
