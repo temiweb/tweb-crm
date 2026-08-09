@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { cleanPhone, parsePackage, waLink } from "./lib/order-utils";
 import {
   LayoutDashboard, ClipboardList, Boxes, Truck, MessageSquare,
   Search, Bell, ChevronDown, PanelLeftClose, PanelLeftOpen,
@@ -273,36 +274,6 @@ const WB_STATUS = {
 // ═══════════════════════════════════════════════
 // CONSTANTS & HELPERS
 // ═══════════════════════════════════════════════
-
-function parsePackage(pkg, country) {
-  if (!pkg) return { packName: "", qty: 1, price: 0 };
-  if (country === "ghana") {
-    const qm = pkg.match(/Buy\s+(\d+)/i), pm = pkg.match(/=\s*GH₵([\d,]+)/);
-    return { packName: `Buy ${qm?.[1] || 1} Pack`, qty: qm ? +qm[1] : 1, price: pm ? +pm[1].replace(/,/g, "") : 0 };
-  }
-  // Handles both "Buy 3 ... = ₦28,000 (...)" and "Product (10 Net ...) = ₦12,000"
-  const qtyM = pkg.match(/buy\s+(\d+)/i) || pkg.match(/\((\d+)\s+/);
-  const priceM = pkg.match(/₦\s*([\d,]+)/), nm = pkg.match(/^([^=(]+)/);
-  return { packName: (nm ? nm[1] : pkg).trim(), qty: qtyM ? +qtyM[1] : 1, price: priceM ? +priceM[1].replace(/,/g, "") : 0 };
-}
-
-function cleanPhone(p) {
-  if (!p) return "";
-  let s = String(p).replace(/['\s+\-()]/g, "");
-  if (s.startsWith("234") && s.length > 10) s = "0" + s.slice(3);
-  if (s.startsWith("44234")) s = "0" + s.slice(5);
-  if (s.startsWith("1") && s.length > 11) s = "0" + s.slice(1);
-  return s;
-}
-
-function waLink(phone, msg, country) {
-  const cc = country === "ghana" ? "233" : "234";
-  const natLen = country === "ghana" ? 9 : 10; // national number length once the leading 0 is dropped
-  let p = cleanPhone(phone);
-  if (p.startsWith("0")) p = cc + p.slice(1);                  // 0805… → 234805…
-  else if (!p.startsWith(cc) && p.length === natLen) p = cc + p; // bare 8054377777 → 2348054377777
-  return `https://wa.me/${p}?text=${encodeURIComponent(msg)}`;
-}
 
 // ─── Delivery-date helpers ───
 // Parse "MM/DD/YYYY", "YYYY-MM-DD", or anything Date can read → Date | null
