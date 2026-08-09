@@ -97,13 +97,26 @@ create trigger stock_purchases_recalc_avg
 -- ── 6. Backfill cost onto already-delivered orders (history) ──
 -- Uses the product's current average cost (seeded above). Only fills blanks,
 -- so re-running never disturbs a cost that's already been set.
-update public.orders o
-   set unit_cost = p.average_cost
-  from public.products p
- where o.product = p.name
-   and o.status = 'delivered'
-   and o.unit_cost is null
-   and p.average_cost is not null;
+--
+-- This is a PURE cost backfill — it must not re-run 0009's inventory-sync
+-- trigger, which raises on historical delivered orders that have no agent and
+-- would otherwise churn agent stock. Disable that one trigger for just this
+-- update; the DO block runs atomically, so any failure rolls the disable back
+-- and leaves the trigger enabled.
+do $$
+begin
+  alter table public.orders disable trigger orders_sync_inventory;
+
+  update public.orders o
+     set unit_cost = p.average_cost
+    from public.products p
+   where o.product = p.name
+     and o.status = 'delivered'
+     and o.unit_cost is null
+     and p.average_cost is not null;
+
+  alter table public.orders enable trigger orders_sync_inventory;
+end $$;
 
 -- ── 7. Also snapshot cost on the bulk-status path ──
 -- 0009 added bulk_set_order_status, which the app uses to deliver many orders at
