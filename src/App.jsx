@@ -27,6 +27,11 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY || "sb_publishable_vQ7vHa
 // bearer so RLS can scope by user. Falls back to the anon key when logged out.
 let authToken = null;
 
+async function responseError(r, fallback) {
+  const body = await r.json().catch(() => null);
+  return body?.message || body?.details || body?.hint || fallback;
+}
+
 const sb = {
   get headers() { return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${authToken || SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" }; },
   async fetch(url, options = {}) {
@@ -72,7 +77,13 @@ const sb = {
   async update(table, match, data) {
     const params = Object.entries(match).map(([k, v]) => `${k}=eq.${v}`).join("&");
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { method: "PATCH", headers: this.headers, body: JSON.stringify(data) });
-    if (!r.ok) throw new Error(`Failed to update ${table} (${r.status})`);
+    if (!r.ok) throw new Error(await responseError(r, `Failed to update ${table} (${r.status})`));
+    return r.json();
+  },
+  async updateIn(table, column, ids, data) {
+    const values = ids.map(id => `"${id}"`).join(",");
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${column}=in.(${values})`, { method: "PATCH", headers: this.headers, body: JSON.stringify(data) });
+    if (!r.ok) throw new Error(await responseError(r, `Failed to update ${table} (${r.status})`));
     return r.json();
   },
   async delete(table, match) {
@@ -88,6 +99,11 @@ const sb = {
     const q = onConflict ? `?on_conflict=${onConflict}` : "";
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}${q}`, { method: "POST", headers: { ...this.headers, "Prefer": "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
     if (!r.ok) { const e = await r.text(); throw new Error(`Failed to save (${r.status}): ${e}`); }
+    return r.json();
+  },
+  async rpc(name, args = {}) {
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, { method: "POST", headers: this.headers, body: JSON.stringify(args) });
+    if (!r.ok) { const e = await r.text(); throw new Error(`Failed to run ${name} (${r.status}): ${e}`); }
     return r.json();
   }
 };
@@ -1294,71 +1310,31 @@ export default function InfinistoresCRM() {
 
   const doUpdateStatus = async (id, status) => {
     const order = orders.find(o => o.id === id);
-    const wasDelivered = order?.status === "delivered";
     const stamp = stampFor(order, status);
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status, ...stamp } : o));
     try {
       await sb.update("orders", { id }, { status, ...stamp });
       logStatus(id, order?.status, status);
-      if (order?.agent_id) {
-        const inv = inventory.find(i => i.agent_id === order.agent_id && i.product_name === order.product);
-        if (inv) {
-          const qty = order.actual_qty_delivered || order.qty || 0;
-          if (status === "delivered" && !wasDelivered) {
-            const [fresh] = await sb.query("inventory", `id=eq.${inv.id}`);
-            const newQty = Math.max(0, (fresh?.qty ?? inv.qty) - qty);
-            await sb.update("inventory", { id: inv.id }, { qty: newQty });
-            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQty } : i));
-          } else if (wasDelivered && status !== "delivered") {
-            const [fresh] = await sb.query("inventory", `id=eq.${inv.id}`);
-            const newQty = (fresh?.qty ?? inv.qty) + qty;
-            await sb.update("inventory", { id: inv.id }, { qty: newQty });
-            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQty } : i));
-          }
-        }
-      }
+      await loadAll();
     } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doAssign = async (orderId, agentId) => {
     const a = agents.find(x => x.id === agentId);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
-    try { await sb.update("orders", { id: orderId }, { agent_id: agentId, agent_name: a?.name || "" }); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.update("orders", { id: orderId }, { agent_id: agentId, agent_name: a?.name || "" }); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
     setShowAssign(null);
   };
 
   const doSaveOrder = async (order) => {
     const { id, created_at, updated_at, ...data } = order;
     const oldOrder = orders.find(o => o.id === id);
-    const wasDelivered = oldOrder?.status === "delivered";
-    const nowDelivered = data.status === "delivered";
     if (data.status) Object.assign(data, stampFor(oldOrder, data.status));
     setOrders(prev => prev.map(o => o.id === id ? { ...o, ...data } : o));
     try {
       await sb.update("orders", { id }, data);
       logStatus(id, oldOrder?.status, data.status);
-      const agentId = data.agent_id || oldOrder?.agent_id;
-      if (agentId) {
-        const inv = inventory.find(i => i.agent_id === agentId && i.product_name === (data.product || oldOrder?.product));
-        if (inv) {
-          const oldQty = oldOrder?.actual_qty_delivered || oldOrder?.qty || 0;
-          const newQtyDelivered = data.actual_qty_delivered || data.qty || 0;
-          const [fresh] = await sb.query("inventory", `id=eq.${inv.id}`);
-          const currentStock = fresh?.qty ?? inv.qty;
-          let newStock = currentStock;
-          if (nowDelivered && !wasDelivered) {
-            newStock = Math.max(0, currentStock - newQtyDelivered);
-          } else if (wasDelivered && !nowDelivered) {
-            newStock = currentStock + oldQty;
-          } else if (wasDelivered && nowDelivered && oldQty !== newQtyDelivered) {
-            newStock = Math.max(0, currentStock + (oldQty - newQtyDelivered));
-          }
-          if (newStock !== currentStock) {
-            await sb.update("inventory", { id: inv.id }, { qty: newStock });
-            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newStock } : i));
-          }
-        }
-      }
+      await loadAll();
     } catch (err) { showToast(err.message); await loadAll(); }
     setEditOrder(null);
   };
@@ -1366,18 +1342,18 @@ export default function InfinistoresCRM() {
   const doDeleteOrder = async (id) => {
     if (!window.confirm("Delete this order? This cannot be undone.")) return;
     setOrders(prev => prev.filter(o => o.id !== id));
-    try { await sb.delete("orders", { id }); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.delete("orders", { id }); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doBulkStatus = async (status) => {
     const ids = [...sel];
     const prevStatus = new Map(orders.filter(o => sel.has(o.id)).map(o => [o.id, o.status]));
-    const byId = new Map(orders.map(o => [o.id, o]));
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, status, ...stampFor(o, status) } : o));
     setSel(new Set());
     try {
-      await Promise.all(ids.map(id => sb.update("orders", { id }, { status, ...stampFor(byId.get(id), status) })));
+      await sb.rpc("bulk_set_order_status", { p_order_ids: ids, p_status: status });
       ids.forEach(id => logStatus(id, prevStatus.get(id), status));
+      await loadAll();
     } catch (err) { showToast(err.message); await loadAll(); }
   };
 
@@ -1386,7 +1362,7 @@ export default function InfinistoresCRM() {
     const ids = [...sel];
     setOrders(prev => prev.filter(o => !sel.has(o.id)));
     setSel(new Set());
-    try { await sb.deleteIn("orders", "id", ids); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.deleteIn("orders", "id", ids); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doBulkAssign = async (agentId) => {
@@ -1394,7 +1370,7 @@ export default function InfinistoresCRM() {
     const ids = [...sel];
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
     setSel(new Set());
-    try { await Promise.all(ids.map(id => sb.update("orders", { id }, { agent_id: agentId, agent_name: a?.name || "" }))); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.updateIn("orders", "id", ids, { agent_id: agentId, agent_name: a?.name || "" }); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   // ─── Phase 7: assign orders to a caller (by their auth user id) ───
@@ -1448,14 +1424,8 @@ export default function InfinistoresCRM() {
 
   const doAddPurchase = async (data) => {
     try {
-      const res = await sb.insert("stock_purchases", data);
-      setPurchases(prev => [...(res || []), ...prev]);
-      const prod = products.find(p => p.name === data.product_name);
-      if (prod) {
-        const newQty = (prod.warehouse_qty || 0) + (data.quantity || 0);
-        await sb.update("products", { id: prod.id }, { warehouse_qty: newQty });
-        setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: newQty } : p));
-      }
+      await sb.insert("stock_purchases", data);
+      await loadAll();
     } catch (err) { showToast(err.message); }
     setShowAddPurchase(false);
   };
@@ -1469,78 +1439,27 @@ export default function InfinistoresCRM() {
   };
 
   const doSetWaybillStatus = async (wb, status) => {
-    const wasDelivered = wb.status === "delivered";
-    const nowDelivered = status === "delivered";
     const patch = { status };
-    if (nowDelivered && !wasDelivered) patch.delivered_at = new Date().toISOString();
+    if (status === "delivered" && wb.status !== "delivered") patch.delivered_at = new Date().toISOString();
     setWaybills(prev => prev.map(w => w.id === wb.id ? { ...w, ...patch } : w));
     try {
       await sb.update("waybills", { id: wb.id }, patch);
-      if (nowDelivered && !wasDelivered) {
-        const prod = products.find(p => p.name === wb.product_name);
-        if (prod) {
-          const newWh = Math.max(0, (prod.warehouse_qty || 0) - wb.quantity);
-          await sb.update("products", { id: prod.id }, { warehouse_qty: newWh });
-          setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: newWh } : p));
-        }
-        if (wb.agent_id) {
-          const inv = inventory.find(i => i.agent_id === wb.agent_id && i.product_name === wb.product_name);
-          if (inv) {
-            const newQ = inv.qty + wb.quantity;
-            await sb.update("inventory", { id: inv.id }, { qty: newQ });
-            setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQ } : i));
-          } else {
-            const res = await sb.insert("inventory", { agent_id: wb.agent_id, product_name: wb.product_name, qty: wb.quantity });
-            setInventory(prev => [...prev, ...(res || [])]);
-          }
-        }
-      }
+      await loadAll();
     } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doAddFaulty = async (data) => {
     try {
-      const res = await sb.insert("faulty_stock", { ...data, agent_id: data.agent_id || null });
-      setFaulty(prev => [...(res || []), ...prev]);
-      if (data.agent_id) {
-        const inv = inventory.find(i => i.agent_id === data.agent_id && i.product_name === data.product_name);
-        if (inv) {
-          const newQ = Math.max(0, inv.qty - data.quantity);
-          await sb.update("inventory", { id: inv.id }, { qty: newQ });
-          setInventory(prev => prev.map(i => i.id === inv.id ? { ...i, qty: newQ } : i));
-        }
-      } else {
-        const prod = products.find(p => p.name === data.product_name);
-        if (prod) {
-          const newWh = Math.max(0, (prod.warehouse_qty || 0) - data.quantity);
-          await sb.update("products", { id: prod.id }, { warehouse_qty: newWh });
-          setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: newWh } : p));
-        }
-      }
+      await sb.insert("faulty_stock", { ...data, agent_id: data.agent_id || null });
+      await loadAll();
     } catch (err) { showToast(err.message); }
     setShowAddFaulty(false);
   };
 
   const doAddTransfer = async (data) => {
-    const { from_agent_id, to_agent_id, product_name, quantity } = data;
     try {
-      const res = await sb.insert("stock_transfers", data);
-      setTransfers(prev => [...(res || []), ...prev]);
-      const fromInv = inventory.find(i => i.agent_id === from_agent_id && i.product_name === product_name);
-      if (fromInv) {
-        const nq = Math.max(0, fromInv.qty - quantity);
-        await sb.update("inventory", { id: fromInv.id }, { qty: nq });
-        setInventory(prev => prev.map(i => i.id === fromInv.id ? { ...i, qty: nq } : i));
-      }
-      const toInv = inventory.find(i => i.agent_id === to_agent_id && i.product_name === product_name);
-      if (toInv) {
-        const nq = toInv.qty + quantity;
-        await sb.update("inventory", { id: toInv.id }, { qty: nq });
-        setInventory(prev => prev.map(i => i.id === toInv.id ? { ...i, qty: nq } : i));
-      } else {
-        const ins = await sb.insert("inventory", { agent_id: to_agent_id, product_name, qty: quantity });
-        setInventory(prev => [...prev, ...(ins || [])]);
-      }
+      await sb.insert("stock_transfers", data);
+      await loadAll();
     } catch (err) { showToast(err.message); await loadAll(); }
     setShowAddTransfer(false);
   };
