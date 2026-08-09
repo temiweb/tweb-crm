@@ -230,6 +230,9 @@ const getStatus = v => STATUSES.find(s => s.value === v) || STATUSES[0];
 
 // ── Phase 7: Caller workflow (feature-flagged; dark in prod until VITE_FEATURE_CALLER=true) ──
 const FEATURE_CALLER = import.meta.env.VITE_FEATURE_CALLER === "true";
+// ── Phase 8: COGS (feature-flagged; dark until migration 0010 is run and VITE_FEATURE_COGS=true).
+// Gating the unit_cost write keeps us from sending a column a not-yet-migrated DB doesn't have. ──
+const FEATURE_COGS = import.meta.env.VITE_FEATURE_COGS === "true";
 const STALE_HOURS = 48; // an In Transit order older than this shows on the chase-up list
 
 // status → effectiveness stage (report-only grouping; separate from the dropdown GROUPS)
@@ -1291,6 +1294,18 @@ export default function InfinistoresCRM() {
     return p;
   };
 
+  // Snapshot the product's current average cost onto the order the first time it is
+  // delivered. Once set it never changes, so historical COGS stays stable as the
+  // running average moves later. Flag-gated so it's dark until migration 0010 is run.
+  const cogsFor = (prevOrder, newStatus, productName) => {
+    if (!FEATURE_COGS) return {};
+    if (newStatus !== "delivered" || prevOrder?.status === "delivered") return {};
+    if (prevOrder?.unit_cost != null) return {};
+    const prod = products.find(p => p.name === (productName || prevOrder?.product));
+    if (!prod || prod.average_cost == null) return {};
+    return { unit_cost: prod.average_cost };
+  };
+
   const doImport = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     setSaving(true);
@@ -1311,9 +1326,10 @@ export default function InfinistoresCRM() {
   const doUpdateStatus = async (id, status) => {
     const order = orders.find(o => o.id === id);
     const stamp = stampFor(order, status);
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, status, ...stamp } : o));
+    const cost = cogsFor(order, status);
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, status, ...stamp, ...cost } : o));
     try {
-      await sb.update("orders", { id }, { status, ...stamp });
+      await sb.update("orders", { id }, { status, ...stamp, ...cost });
       logStatus(id, order?.status, status);
       await loadAll();
     } catch (err) { showToast(err.message); await loadAll(); }
@@ -1330,6 +1346,7 @@ export default function InfinistoresCRM() {
     const { id, created_at, updated_at, ...data } = order;
     const oldOrder = orders.find(o => o.id === id);
     if (data.status) Object.assign(data, stampFor(oldOrder, data.status));
+    Object.assign(data, cogsFor(oldOrder, data.status, data.product || oldOrder?.product));
     setOrders(prev => prev.map(o => o.id === id ? { ...o, ...data } : o));
     try {
       await sb.update("orders", { id }, data);
