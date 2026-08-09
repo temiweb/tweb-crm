@@ -231,9 +231,6 @@ const getStatus = v => STATUSES.find(s => s.value === v) || STATUSES[0];
 
 // ── Phase 7: Caller workflow (feature-flagged; dark in prod until VITE_FEATURE_CALLER=true) ──
 const FEATURE_CALLER = import.meta.env.VITE_FEATURE_CALLER === "true";
-// ── Phase 8: COGS (feature-flagged; dark until migration 0010 is run and VITE_FEATURE_COGS=true).
-// Gating the unit_cost write keeps us from sending a column a not-yet-migrated DB doesn't have. ──
-const FEATURE_COGS = import.meta.env.VITE_FEATURE_COGS === "true";
 const STALE_HOURS = 48; // an In Transit order older than this shows on the chase-up list
 
 // status → effectiveness stage (report-only grouping; separate from the dropdown GROUPS)
@@ -1267,9 +1264,9 @@ export default function InfinistoresCRM() {
 
   // Snapshot the product's current average cost onto the order the first time it is
   // delivered. Once set it never changes, so historical COGS stays stable as the
-  // running average moves later. Flag-gated so it's dark until migration 0010 is run.
+  // running average moves later. Safe to always run: migration 0010 added the column,
+  // and it only writes when a cost is actually available (never over an existing one).
   const cogsFor = (prevOrder, newStatus, productName) => {
-    if (!FEATURE_COGS) return {};
     if (newStatus !== "delivered" || prevOrder?.status === "delivered") return {};
     if (prevOrder?.unit_cost != null) return {};
     const prod = products.find(p => p.name === (productName || prevOrder?.product));
