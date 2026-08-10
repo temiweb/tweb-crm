@@ -90,11 +90,11 @@ const sb = {
   async delete(table, match) {
     const params = Object.entries(match).map(([k, v]) => `${k}=eq.${v}`).join("&");
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { method: "DELETE", headers: this.headers });
-    if (!r.ok) throw new Error(`Failed to delete (${r.status})`);
+    if (!r.ok) throw new Error(await responseError(r, `Failed to delete (${r.status})`));
   },
   async deleteIn(table, col, ids) {
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=in.(${ids.map(i => `"${i}"`).join(",")})`, { method: "DELETE", headers: this.headers });
-    if (!r.ok) throw new Error(`Failed to delete (${r.status})`);
+    if (!r.ok) throw new Error(await responseError(r, `Failed to delete (${r.status})`));
   },
   async upsert(table, data, onConflict) {
     const q = onConflict ? `?on_conflict=${onConflict}` : "";
@@ -857,6 +857,7 @@ export default function InfinistoresCRM() {
   const [showStock, setShowStock] = useState(null);
   const [showAddWaybill, setShowAddWaybill] = useState(false);
   const [showAddPurchase, setShowAddPurchase] = useState(false);
+  const [editPurchase, setEditPurchase] = useState(null);
   const [showAddFaulty, setShowAddFaulty] = useState(false);
   const [showAddTransfer, setShowAddTransfer] = useState(false);
   const [showAddStaff, setShowAddStaff] = useState(false);
@@ -1415,6 +1416,26 @@ export default function InfinistoresCRM() {
     setShowAddPurchase(false);
   };
 
+  const doEditPurchase = async (data) => {
+    const id = editPurchase?.id;
+    if (!id) return;
+    try {
+      await sb.update("stock_purchases", { id }, data);
+      await loadAll();
+      setEditPurchase(null);
+      showToast("Purchase updated", "success");
+    } catch (err) { showToast(err.message); }
+  };
+
+  const doDeletePurchase = async (purchase) => {
+    if (!window.confirm(`Delete this ${purchase.quantity}-unit ${purchase.product_name} purchase? Warehouse stock will be reduced by the same quantity.`)) return;
+    try {
+      await sb.delete("stock_purchases", { id: purchase.id });
+      await loadAll();
+      showToast("Purchase deleted and warehouse stock corrected", "success");
+    } catch (err) { showToast(err.message); }
+  };
+
   const doAddWaybill = async (data) => {
     try {
       const res = await sb.insert("waybills", { ...data, status: "pending" });
@@ -1858,7 +1879,7 @@ export default function InfinistoresCRM() {
 
       {invTab === "buy" && (purchases.length === 0 ? <Card className="cx-empty"><Package size={40} /><div className="cx-section-t" style={{ color: T.text }}>No purchases logged</div></Card> :
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-          <thead><tr><th>Date</th><th>Product</th><th className="r">Qty</th><th className="r">Unit cost</th><th className="r">Total</th><th>Note</th></tr></thead>
+          <thead><tr><th>Date</th><th>Product</th><th className="r">Qty</th><th className="r">Unit cost</th><th className="r">Total</th><th>Note</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{purchases.map(pu => (
             <tr key={pu.id}>
               <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(pu.created_at).toLocaleDateString()}</td>
@@ -1867,6 +1888,7 @@ export default function InfinistoresCRM() {
               <td className="r cx-num">{pu.unit_cost != null ? cur + (+pu.unit_cost).toLocaleString() : "—"}</td>
               <td className="r cx-num" style={{ fontWeight: 700 }}>{pu.unit_cost != null ? cur + (pu.quantity * +pu.unit_cost).toLocaleString() : "—"}</td>
               <td style={{ fontSize: "12px", color: T.textMuted }}>{pu.note}</td>
+              {caps.inventory === "edit" && <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => setEditPurchase(pu)}><Pencil size={13} />Edit</Btn><Btn v="ghost" sz="xs" onClick={() => doDeletePurchase(pu)} style={{ color: T.danger }} aria-label={`Delete ${pu.product_name} purchase`}><Trash2 size={14} /></Btn></div></td>}
             </tr>
           ))}</tbody>
         </table></div></Card>
@@ -2228,6 +2250,10 @@ export default function InfinistoresCRM() {
         <PurchaseForm products={products} cur={cur} onSubmit={doAddPurchase} />
       </Modal>
 
+      <Modal open={!!editPurchase} onClose={() => setEditPurchase(null)} title="Edit purchase">
+        {editPurchase && <PurchaseForm key={editPurchase.id} products={products} cur={cur} purchase={editPurchase} onSubmit={doEditPurchase} />}
+      </Modal>
+
       <Modal open={showAddFaulty} onClose={() => setShowAddFaulty(false)} title="Log faulty / returned stock">
         <FaultyForm products={products} agents={cAgents} onSubmit={doAddFaulty} />
       </Modal>
@@ -2389,11 +2415,11 @@ function WaybillForm({ products, agents, onSubmit }) {
   </div>;
 }
 
-function PurchaseForm({ products, cur, onSubmit }) {
-  const [pn, setPn] = useState(products[0]?.name || "");
-  const [qty, setQty] = useState(1);
-  const [cost, setCost] = useState("");
-  const [note, setNote] = useState("");
+function PurchaseForm({ products, cur, onSubmit, purchase }) {
+  const [pn, setPn] = useState(purchase?.product_name || products[0]?.name || "");
+  const [qty, setQty] = useState(purchase?.quantity || 1);
+  const [cost, setCost] = useState(purchase?.unit_cost ?? "");
+  const [note, setNote] = useState(purchase?.note || "");
   const [err, setErr] = useState("");
   return <div>
     {products.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add a product first.</div>}
@@ -2403,7 +2429,7 @@ function PurchaseForm({ products, cur, onSubmit }) {
     <Inp label={`Unit cost (${cur}) — optional`} type="number" value={cost} onChange={e => setCost(e.target.value)} />
     <Inp label="Note — optional" value={note} onChange={e => setNote(e.target.value)} />
     {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
-    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, quantity: qty, unit_cost: cost === "" ? null : +cost, note }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Record purchase</Btn>
+    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, quantity: qty, unit_cost: cost === "" ? null : +cost, note }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{purchase ? "Save purchase" : "Record purchase"}</Btn>
   </div>;
 }
 
