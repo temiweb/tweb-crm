@@ -860,6 +860,7 @@ export default function InfinistoresCRM() {
   const [editPurchase, setEditPurchase] = useState(null);
   const [showAddFaulty, setShowAddFaulty] = useState(false);
   const [showAddTransfer, setShowAddTransfer] = useState(false);
+  const [editTransfer, setEditTransfer] = useState(null);
   const [showAddStaff, setShowAddStaff] = useState(false);
   const [showAddOrder, setShowAddOrder] = useState(false);
   const [importCountry, setImportCountry] = useState("auto");
@@ -1481,6 +1482,26 @@ export default function InfinistoresCRM() {
     setShowAddTransfer(false);
   };
 
+  const doEditTransfer = async (data) => {
+    const id = editTransfer?.id;
+    if (!id) return;
+    try {
+      await sb.update("stock_transfers", { id }, data);
+      await loadAll();
+      setEditTransfer(null);
+      showToast("Transfer updated and stock reconciled", "success");
+    } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  const doDeleteTransfer = async (transfer) => {
+    if (!window.confirm(`Delete this ${transfer.quantity}-unit ${transfer.product_name} transfer? Stock will be returned to the sending agent and removed from the receiving agent.`)) return;
+    try {
+      await sb.delete("stock_transfers", { id: transfer.id });
+      await loadAll();
+      showToast("Transfer deleted and stock reconciled", "success");
+    } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
   const doInviteStaff = async (data) => {
     try {
       const r = await fetch(`${SUPABASE_URL}/functions/v1/invite-staff`, {
@@ -1875,7 +1896,7 @@ export default function InfinistoresCRM() {
 
       {invTab === "transfers" && (transfers.length === 0 ? <Card className="cx-empty"><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>No transfers yet</div><p style={{ marginTop: "4px" }}>Move stock from one agent to another to rebalance the field.</p></Card> :
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-          <thead><tr><th>Date</th><th>Product</th><th>From</th><th>To</th><th className="r">Qty</th></tr></thead>
+          <thead><tr><th>Date</th><th>Product</th><th>From</th><th>To</th><th className="r">Qty</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{transfers.map(t => (
             <tr key={t.id}>
               <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(t.created_at).toLocaleDateString()}</td>
@@ -1883,6 +1904,7 @@ export default function InfinistoresCRM() {
               <td style={{ fontSize: "12px" }}>{agentName(t.from_agent_id)}</td>
               <td style={{ fontSize: "12px" }}>{agentName(t.to_agent_id)}</td>
               <td className="r cx-num" style={{ fontWeight: 700 }}>{t.quantity}</td>
+              {caps.inventory === "edit" && <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => setEditTransfer(t)}><Pencil size={13} />Edit</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteTransfer(t)} style={{ color: T.danger }} aria-label={`Delete ${t.product_name} transfer`}><Trash2 size={14} /></Btn></div></td>}
             </tr>
           ))}</tbody>
         </table></div></Card>
@@ -2273,6 +2295,10 @@ export default function InfinistoresCRM() {
         <TransferForm products={products} agents={cAgents} onSubmit={doAddTransfer} />
       </Modal>
 
+      <Modal open={!!editTransfer} onClose={() => setEditTransfer(null)} title="Edit stock transfer">
+        {editTransfer && <TransferForm key={editTransfer.id} products={products} agents={cAgents} transfer={editTransfer} onSubmit={doEditTransfer} />}
+      </Modal>
+
       <Modal open={showAddStaff} onClose={() => setShowAddStaff(false)} title="Invite staff member">
         <StaffForm onSubmit={doInviteStaff} />
       </Modal>
@@ -2504,11 +2530,11 @@ function StaffForm({ onSubmit }) {
   </div>;
 }
 
-function TransferForm({ products, agents, onSubmit }) {
-  const [pn, setPn] = useState(products[0]?.name || "");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [qty, setQty] = useState(1);
+function TransferForm({ products, agents, onSubmit, transfer }) {
+  const [pn, setPn] = useState(transfer?.product_name || products[0]?.name || "");
+  const [from, setFrom] = useState(transfer?.from_agent_id || "");
+  const [to, setTo] = useState(transfer?.to_agent_id || "");
+  const [qty, setQty] = useState(transfer?.quantity || 1);
   const [err, setErr] = useState("");
   return <div>
     {agents.length < 2 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>You need at least two agents to transfer between.</div>}
@@ -2520,7 +2546,7 @@ function TransferForm({ products, agents, onSubmit }) {
     <select value={to} onChange={e => setTo(e.target.value)} style={fSel}><option value="">Select agent…</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
     <Inp label="Quantity" type="number" value={qty} onChange={e => setQty(+e.target.value || 0)} />
     {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
-    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (!from) return setErr("Pick the source agent."); if (!to) return setErr("Pick the destination agent."); if (from === to) return setErr("Source and destination must be different."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, from_agent_id: from, to_agent_id: to, quantity: qty }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Transfer</Btn>
+    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (!from) return setErr("Pick the source agent."); if (!to) return setErr("Pick the destination agent."); if (from === to) return setErr("Source and destination must be different."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, from_agent_id: from, to_agent_id: to, quantity: qty }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{transfer ? "Save transfer" : "Transfer"}</Btn>
   </div>;
 }
 
