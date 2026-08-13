@@ -1374,9 +1374,20 @@ export default function InfinistoresCRM() {
   };
 
   const doDeleteAgent = async (id) => {
-    if (!window.confirm("Delete this agent?")) return;
-    setAgents(prev => prev.filter(a => a.id !== id));
-    try { await sb.delete("agents", { id }); } catch (err) { showToast(err.message); await loadAll(); }
+    const agent = agents.find(a => a.id === id);
+    const stock = inventory.filter(i => i.agent_id === id);
+    const unitsInStock = stock.reduce((total, item) => total + (item.qty || 0), 0);
+    if (unitsInStock > 0) {
+      showToast(`${agent?.name || "This agent"} still has ${unitsInStock} unit${unitsInStock === 1 ? "" : "s"} in stock. Transfer or reconcile the stock before deleting the agent.`);
+      return;
+    }
+    if (!window.confirm(`Delete ${agent?.name || "this agent"}? Their zero-stock inventory records will also be removed. Historical orders and stock records will be kept.`)) return;
+    try {
+      if (stock.length) await sb.delete("inventory", { agent_id: id });
+      await sb.delete("agents", { id });
+      await loadAll();
+      showToast("Agent deleted", "success");
+    } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doEditAgent = async (data) => {
