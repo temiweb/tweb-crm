@@ -861,6 +861,9 @@ export default function InfinistoresCRM() {
   const [showAddFaulty, setShowAddFaulty] = useState(false);
   const [showAddTransfer, setShowAddTransfer] = useState(false);
   const [editTransfer, setEditTransfer] = useState(null);
+  const [editWaybill, setEditWaybill] = useState(null);
+  const [editFaulty, setEditFaulty] = useState(null);
+  const [editProduct, setEditProduct] = useState(null);
   const [showAddStaff, setShowAddStaff] = useState(false);
   const [showAddOrder, setShowAddOrder] = useState(false);
   const [importCountry, setImportCountry] = useState("auto");
@@ -1403,6 +1406,25 @@ export default function InfinistoresCRM() {
     setShowAddProduct(false);
   };
 
+  const doEditProduct = async (name) => {
+    if (!editProduct?.id) return;
+    try {
+      await sb.rpc("rename_unused_product", { p_product_id: editProduct.id, p_new_name: name });
+      await loadAll();
+      setEditProduct(null);
+      showToast("Product renamed", "success");
+    } catch (err) { showToast(err.message); }
+  };
+
+  const doDeleteProduct = async (product) => {
+    if (!window.confirm(`Delete ${product.name}? This only works if it has no stock or transaction history.`)) return;
+    try {
+      await sb.rpc("delete_unused_product", { p_product_id: product.id });
+      await loadAll();
+      showToast("Product deleted", "success");
+    } catch (err) { showToast(err.message); }
+  };
+
   const doUpdateStock = async (agentId, productName, qty) => {
     const existing = inventory.find(i => i.agent_id === agentId && i.product_name === productName);
     if (existing) {
@@ -1450,10 +1472,30 @@ export default function InfinistoresCRM() {
 
   const doAddWaybill = async (data) => {
     try {
-      const res = await sb.insert("waybills", { ...data, status: "pending" });
+      const res = await sb.insert("waybills", data.items.map(item => ({ ...item, agent_id: data.agent_id, status: "pending" })));
       setWaybills(prev => [...(res || []), ...prev]);
     } catch (err) { showToast(err.message); }
     setShowAddWaybill(false);
+  };
+
+  const doEditWaybill = async (data) => {
+    const id = editWaybill?.id;
+    if (!id) return;
+    try {
+      await sb.update("waybills", { id }, data);
+      await loadAll();
+      setEditWaybill(null);
+      showToast("Waybill updated and stock reconciled", "success");
+    } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  const doDeleteWaybill = async (waybill) => {
+    if (!window.confirm(`Delete this ${waybill.quantity}-unit ${waybill.product_name} waybill? If it was delivered, stock will be returned to the warehouse and removed from the agent.`)) return;
+    try {
+      await sb.delete("waybills", { id: waybill.id });
+      await loadAll();
+      showToast("Waybill deleted and stock reconciled", "success");
+    } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doSetWaybillStatus = async (wb, status) => {
@@ -1472,6 +1514,26 @@ export default function InfinistoresCRM() {
       await loadAll();
     } catch (err) { showToast(err.message); }
     setShowAddFaulty(false);
+  };
+
+  const doEditFaulty = async (data) => {
+    const id = editFaulty?.id;
+    if (!id) return;
+    try {
+      await sb.update("faulty_stock", { id }, data);
+      await loadAll();
+      setEditFaulty(null);
+      showToast("Faulty stock updated and inventory reconciled", "success");
+    } catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  const doDeleteFaulty = async (record) => {
+    if (!window.confirm(`Delete this ${record.quantity}-unit faulty stock record? The quantity will be returned to its original stock location.`)) return;
+    try {
+      await sb.delete("faulty_stock", { id: record.id });
+      await loadAll();
+      showToast("Faulty stock deleted and inventory reconciled", "success");
+    } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const doAddTransfer = async (data) => {
@@ -1855,13 +1917,14 @@ export default function InfinistoresCRM() {
 
       {invTab === "products" && (products.length === 0 ? <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No products yet</div></Card> :
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-          <thead><tr><th>Product</th><th className="r">In warehouse</th><th className="r">With agents</th><th className="r">Total</th></tr></thead>
+          <thead><tr><th>Product</th><th className="r">In warehouse</th><th className="r">With agents</th><th className="r">Total</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{products.map(p => { const wa = withAgents(p.name); const wh = p.warehouse_qty || 0; return (
             <tr key={p.id}>
               <td><b style={{ fontWeight: 600 }}>{p.name}</b></td>
               <td className="r">{caps.inventory === "edit" ? <input type="number" defaultValue={wh} key={wh} onBlur={e => { const v = Math.max(0, +e.target.value || 0); if (v !== wh) doSetWarehouseQty(p, v); }} style={{ width: "72px", textAlign: "right", padding: "5px 8px", border: `1.5px solid ${T.border}`, borderRadius: "6px", fontFamily: T.fd, fontWeight: 700 }} /> : <span className="cx-num" style={{ fontWeight: 700 }}>{wh}</span>}</td>
               <td className="r cx-num" style={{ color: wa ? T.accent : T.textLight }}>{wa}</td>
               <td className="r cx-num" style={{ fontWeight: 800 }}>{wh + wa}</td>
+              {caps.inventory === "edit" && <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => setEditProduct(p)}><Pencil size={13} />Edit</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteProduct(p)} style={{ color: T.danger }} aria-label={`Delete ${p.name}`}><Trash2 size={14} /></Btn></div></td>}
             </tr>
           ); })}</tbody>
         </table></div></Card>
@@ -1880,7 +1943,7 @@ export default function InfinistoresCRM() {
 
       {invTab === "waybills" && (waybills.length === 0 ? <Card className="cx-empty"><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>No waybills yet</div><p style={{ marginTop: "4px" }}>Dispatch warehouse stock to an agent; mark it delivered to move it into their stock.</p></Card> :
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-          <thead><tr><th>Date</th><th>Product</th><th>Agent</th><th className="r">Qty</th><th>Status</th><th className="r">Action</th></tr></thead>
+          <thead><tr><th>Date</th><th>Product</th><th>Agent</th><th className="r">Qty</th><th>Status</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{waybills.map(w => { const st = WB_STATUS[w.status] || WB_STATUS.pending; return (
             <tr key={w.id}>
               <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(w.created_at).toLocaleDateString()}</td>
@@ -1888,7 +1951,7 @@ export default function InfinistoresCRM() {
               <td style={{ fontSize: "12px" }}>{agentName(w.agent_id)}</td>
               <td className="r cx-num" style={{ fontWeight: 700 }}>{w.quantity}</td>
               <td><span className="cx-pill" style={{ color: st.color, background: st.bg }}><span className="dot" />{st.label}</span></td>
-              <td className="r">{w.status === "delivered" ? <span style={{ fontSize: "11px", color: T.textMuted }}>{w.delivered_at ? new Date(w.delivered_at).toLocaleDateString() : "✓"}</span> : <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{w.status === "pending" && <Btn v="secondary" sz="xs" onClick={() => doSetWaybillStatus(w, "in_transit")}>In transit</Btn>}<Btn sz="xs" onClick={() => doSetWaybillStatus(w, "delivered")}>Delivered</Btn></div>}</td>
+              {caps.inventory === "edit" && <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>{w.status !== "delivered" && <>{w.status === "pending" && <Btn v="secondary" sz="xs" onClick={() => doSetWaybillStatus(w, "in_transit")}>In transit</Btn>}<Btn sz="xs" onClick={() => doSetWaybillStatus(w, "delivered")}>Delivered</Btn></>}<Btn v="secondary" sz="xs" onClick={() => setEditWaybill(w)}><Pencil size={13} />Edit</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteWaybill(w)} style={{ color: T.danger }} aria-label={`Delete ${w.product_name} waybill`}><Trash2 size={14} /></Btn></div></td>}
             </tr>
           ); })}</tbody>
         </table></div></Card>
@@ -1929,7 +1992,7 @@ export default function InfinistoresCRM() {
 
       {invTab === "faulty" && (faulty.length === 0 ? <Card className="cx-empty"><Package size={40} /><div className="cx-section-t" style={{ color: T.text }}>No faulty stock logged</div></Card> :
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-          <thead><tr><th>Date</th><th>Product</th><th>From</th><th className="r">Qty</th><th>Reason</th></tr></thead>
+          <thead><tr><th>Date</th><th>Product</th><th>From</th><th className="r">Qty</th><th>Reason</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{faulty.map(f => (
             <tr key={f.id}>
               <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(f.created_at).toLocaleDateString()}</td>
@@ -1937,6 +2000,7 @@ export default function InfinistoresCRM() {
               <td style={{ fontSize: "12px" }}>{f.agent_id ? agentName(f.agent_id) : "Warehouse"}</td>
               <td className="r cx-num" style={{ fontWeight: 700 }}>{f.quantity}</td>
               <td style={{ fontSize: "12px", color: T.textMuted }}>{f.reason}</td>
+              {caps.inventory === "edit" && <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => setEditFaulty(f)}><Pencil size={13} />Edit</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteFaulty(f)} style={{ color: T.danger }} aria-label={`Delete ${f.product_name} faulty record`}><Trash2 size={14} /></Btn></div></td>}
             </tr>
           ))}</tbody>
         </table></div></Card>
@@ -2267,6 +2331,10 @@ export default function InfinistoresCRM() {
         <ProductForm onSubmit={doAddProduct} />
       </Modal>
 
+      <Modal open={!!editProduct} onClose={() => setEditProduct(null)} title="Rename product">
+        {editProduct && <ProductForm key={editProduct.id} product={editProduct} onSubmit={doEditProduct} />}
+      </Modal>
+
       <Modal open={showAddOrder} onClose={() => setShowAddOrder(false)} title="Add order" wide>
         <OrderForm country={country} cur={cur} onSubmit={doAddOrder} />
       </Modal>
@@ -2279,6 +2347,10 @@ export default function InfinistoresCRM() {
         <WaybillForm products={products} agents={cAgents} onSubmit={doAddWaybill} />
       </Modal>
 
+      <Modal open={!!editWaybill} onClose={() => setEditWaybill(null)} title="Edit waybill">
+        {editWaybill && <WaybillForm key={editWaybill.id} products={products} agents={cAgents} waybill={editWaybill} onSubmit={doEditWaybill} />}
+      </Modal>
+
       <Modal open={showAddPurchase} onClose={() => setShowAddPurchase(false)} title="Record purchase">
         <PurchaseForm products={products} cur={cur} onSubmit={doAddPurchase} />
       </Modal>
@@ -2289,6 +2361,10 @@ export default function InfinistoresCRM() {
 
       <Modal open={showAddFaulty} onClose={() => setShowAddFaulty(false)} title="Log faulty / returned stock">
         <FaultyForm products={products} agents={cAgents} onSubmit={doAddFaulty} />
+      </Modal>
+
+      <Modal open={!!editFaulty} onClose={() => setEditFaulty(null)} title="Edit faulty stock">
+        {editFaulty && <FaultyForm key={editFaulty.id} products={products} agents={cAgents} faulty={editFaulty} onSubmit={doEditFaulty} />}
       </Modal>
 
       <Modal open={showAddTransfer} onClose={() => setShowAddTransfer(false)} title="Transfer stock between agents">
@@ -2426,29 +2502,40 @@ function AgentForm({ onSubmit, country, agent, knownStates = [] }) {
   </div>;
 }
 
-function ProductForm({ onSubmit }) {
-  const [n, sN] = useState("");
-  return <div><Inp label="Product name" value={n} onChange={e => sN(e.target.value)} /><Btn onClick={() => { if (n) onSubmit(n); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Add product</Btn></div>;
+function ProductForm({ onSubmit, product }) {
+  const [n, sN] = useState(product?.name || "");
+  return <div><Inp label="Product name" value={n} onChange={e => sN(e.target.value)} /><Btn onClick={() => { if (n.trim()) onSubmit(n.trim()); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{product ? "Save name" : "Add product"}</Btn></div>;
 }
 
 const fLbl = { display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.6px" };
 const fSel = { width: "100%", padding: "10px 13px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "14px", fontFamily: T.f, background: T.surface, marginBottom: "12px", boxSizing: "border-box" };
 
-function WaybillForm({ products, agents, onSubmit }) {
-  const [pn, setPn] = useState(products[0]?.name || "");
-  const [ag, setAg] = useState("");
-  const [qty, setQty] = useState(1);
+function WaybillForm({ products, agents, onSubmit, waybill }) {
+  const [ag, setAg] = useState(waybill?.agent_id || "");
+  const [items, setItems] = useState(waybill ? [{ product_name: waybill.product_name, quantity: waybill.quantity }] : [{ product_name: products[0]?.name || "", quantity: 1 }]);
   const [err, setErr] = useState("");
+  const setItem = (index, patch) => setItems(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  const removeItem = index => setItems(current => current.filter((_, itemIndex) => itemIndex !== index));
+  const submit = () => {
+    if (!ag) return setErr("Pick an agent.");
+    if (!items.length || items.some(item => !item.product_name || item.quantity < 1)) return setErr("Pick a product and enter a quantity of at least 1 for every line.");
+    if (new Set(items.map(item => item.product_name)).size !== items.length) return setErr("Add each product only once per waybill.");
+    if (waybill) onSubmit({ agent_id: ag, ...items[0] });
+    else onSubmit({ agent_id: ag, items });
+  };
   return <div>
     {products.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add a product first.</div>}
     {agents.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add an agent first.</div>}
-    <label style={fLbl}>Product</label>
-    <select value={pn} onChange={e => setPn(e.target.value)} style={fSel}>{products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select>
     <label style={fLbl}>Agent</label>
     <select value={ag} onChange={e => setAg(e.target.value)} style={fSel}><option value="">Select agent…</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
-    <Inp label="Quantity" type="number" value={qty} onChange={e => setQty(+e.target.value || 0)} />
+    {items.map((item, index) => <div key={index} style={{ display: "grid", gridTemplateColumns: waybill ? "1fr 100px" : "1fr 100px 32px", gap: "8px", alignItems: "end", marginBottom: "8px" }}>
+      <div><label style={fLbl}>Product{items.length > 1 ? ` ${index + 1}` : ""}</label><select value={item.product_name} onChange={e => setItem(index, { product_name: e.target.value })} style={{ ...fSel, marginBottom: 0 }}>{products.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select></div>
+      <Inp label="Quantity" type="number" value={item.quantity} onChange={e => setItem(index, { quantity: +e.target.value || 0 })} />
+      {!waybill && <Btn v="ghost" sz="sm" onClick={() => removeItem(index)} disabled={items.length === 1} style={{ color: T.danger, marginBottom: "12px" }} aria-label="Remove product"><Trash2 size={15} /></Btn>}
+    </div>)}
+    {!waybill && <Btn v="secondary" sz="sm" onClick={() => setItems(current => [...current, { product_name: products[0]?.name || "", quantity: 1 }])} style={{ marginBottom: "12px" }}><Plus size={14} />Add another product</Btn>}
     {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
-    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (!ag) return setErr("Pick an agent."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, agent_id: ag, quantity: qty }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Create waybill</Btn>
+    <Btn onClick={submit} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{waybill ? "Save waybill" : "Create waybill"}</Btn>
   </div>;
 }
 
@@ -2550,11 +2637,11 @@ function TransferForm({ products, agents, onSubmit, transfer }) {
   </div>;
 }
 
-function FaultyForm({ products, agents, onSubmit }) {
-  const [pn, setPn] = useState(products[0]?.name || "");
-  const [src, setSrc] = useState("warehouse");
-  const [qty, setQty] = useState(1);
-  const [reason, setReason] = useState("");
+function FaultyForm({ products, agents, onSubmit, faulty }) {
+  const [pn, setPn] = useState(faulty?.product_name || products[0]?.name || "");
+  const [src, setSrc] = useState(faulty?.agent_id || "warehouse");
+  const [qty, setQty] = useState(faulty?.quantity || 1);
+  const [reason, setReason] = useState(faulty?.reason || "");
   const [err, setErr] = useState("");
   return <div>
     {products.length === 0 && <div style={{ color: T.danger, fontSize: "12px", marginBottom: "8px" }}>Add a product first.</div>}
@@ -2565,7 +2652,7 @@ function FaultyForm({ products, agents, onSubmit }) {
     <Inp label="Quantity" type="number" value={qty} onChange={e => setQty(+e.target.value || 0)} />
     <Inp label="Reason — optional" value={reason} onChange={e => setReason(e.target.value)} />
     {err && <div style={{ color: T.danger, fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>{err}</div>}
-    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, agent_id: src === "warehouse" ? null : src, quantity: qty, reason }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>Log faulty</Btn>
+    <Btn onClick={() => { if (!pn) return setErr("Pick a product."); if (qty < 1) return setErr("Quantity must be at least 1."); onSubmit({ product_name: pn, agent_id: src === "warehouse" ? null : src, quantity: qty, reason }); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{faulty ? "Save faulty stock" : "Log faulty"}</Btn>
   </div>;
 }
 
