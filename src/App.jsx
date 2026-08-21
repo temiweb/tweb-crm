@@ -34,12 +34,17 @@ async function responseError(r, fallback) {
 }
 
 // TEMP egress probe — measures decompressed bytes per table during a poll.
-// Remove once we've captured the baseline vs Stage 1.
+// Remove once we've confirmed the incremental-sync payload drop.
 const __probe = { on: false, bytes: {} };
 async function __measure(table, r) {
   if (!__probe.on) return;
   try { const t = await r.clone().text(); __probe.bytes[table] = (__probe.bytes[table] || 0) + t.length; } catch { /* noop */ }
 }
+
+// Incremental sync: full reconcile every N polls catches deletes / reassignments
+// that a "changed since" query can't see.
+const FULL_RECONCILE_EVERY = 15;
+const maxTs = (rows) => { let m = null; (rows || []).forEach(o => { const u = o.updated_at || o.created_at; if (u && (!m || u > m)) m = u; }); return m; };
 
 const sb = {
   get headers() { return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${authToken || SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" }; },
@@ -824,6 +829,8 @@ export default function InfinistoresCRM() {
   // STATE there sees a stale false — which made transient poll failures
   // escalate to the full-screen Connection Error instead of the ⚠ Offline badge.
   const loadedRef = useRef(false);
+  const syncCursorRef = useRef(null); // max orders.updated_at seen — the incremental-sync cursor
+  const pollCountRef = useRef(0);     // counts incremental polls, for the periodic full reconcile
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [syncError, setSyncError] = useState(false);
@@ -883,7 +890,11 @@ export default function InfinistoresCRM() {
   useEffect(() => { const c = () => setIsMobile(window.innerWidth < 768); c(); window.addEventListener("resize", c); return () => window.removeEventListener("resize", c); }, []);
 
   // ─── LOAD ALL DATA ───
-  const loadAll = async (retries = 3) => {
+  // Default is a FULL load (login, manual refresh, error-recovery). Only the 90s
+  // poll passes incremental=true, which fetches just the orders changed since the
+  // last sync — except every FULL_RECONCILE_EVERY polls it does a full load to
+  // catch deletes / reassignments a "changed since" query can't see.
+  const loadAll = async (retries = 3, incremental = false) => {
     try {
       // If the session can't be refreshed, sign out cleanly — otherwise the
       // queries would run with the anon key and RLS would return empty arrays,
@@ -893,44 +904,69 @@ export default function InfinistoresCRM() {
         showToast("Your session expired — please sign in again.");
         return;
       }
+      let doFull = !incremental || !loadedRef.current || !syncCursorRef.current;
+      if (incremental && !doFull) { const n = pollCountRef.current++; if (n % FULL_RECONCILE_EVERY === 0) doFull = true; }
+
       __probe.on = true; __probe.bytes = {};
-      const [o, a, p, inv, t] = await Promise.all([
-        sb.queryAll("orders", "order=created_at.desc"),
-        sb.query("agents", "order=created_at.asc"),
-        sb.query("products", "order=created_at.asc"),
-        sb.query("inventory"),
-        sb.query("templates"),
-      ]);
-      setOrders(o || []); setAgents(a || []); setProducts(p || []); setInventory(inv || []);
-      const tMap = {};
-      (t || []).forEach(r => { tMap[r.status_key] = r.message; });
-      setTemplates(tMap);
-      setLoadError(null);
-      setLoaded(true);
-      loadedRef.current = true;
-      setSyncError(false);
-      // Phase 4 tables — best-effort (may not exist in older environments)
-      try {
-        const [wb, pu, fa, tr] = await Promise.all([
-          sb.query("waybills", "order=created_at.desc"),
-          sb.query("stock_purchases", "order=created_at.desc"),
-          sb.query("faulty_stock", "order=created_at.desc"),
-          sb.query("stock_transfers", "order=created_at.desc"),
+
+      if (doFull) {
+        const [o, a, p, inv, t] = await Promise.all([
+          sb.queryAll("orders", "order=created_at.desc"),
+          sb.query("agents", "order=created_at.asc"),
+          sb.query("products", "order=created_at.asc"),
+          sb.query("inventory"),
+          sb.query("templates"),
         ]);
-        setWaybills(wb || []); setPurchases(pu || []); setFaulty(fa || []); setTransfers(tr || []);
-      } catch { /* inventory tables not present yet */ }
-      try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
+        setOrders(o || []); setAgents(a || []); setProducts(p || []); setInventory(inv || []);
+        const tMap = {};
+        (t || []).forEach(r => { tMap[r.status_key] = r.message; });
+        setTemplates(tMap);
+        syncCursorRef.current = maxTs(o);
+        setLoadError(null);
+        setLoaded(true);
+        loadedRef.current = true;
+        setSyncError(false);
+        // Phase 4 tables — best-effort (may not exist in older environments)
+        try {
+          const [wb, pu, fa, tr] = await Promise.all([
+            sb.query("waybills", "order=created_at.desc"),
+            sb.query("stock_purchases", "order=created_at.desc"),
+            sb.query("faulty_stock", "order=created_at.desc"),
+            sb.query("stock_transfers", "order=created_at.desc"),
+          ]);
+          setWaybills(wb || []); setPurchases(pu || []); setFaulty(fa || []); setTransfers(tr || []);
+        } catch { /* inventory tables not present yet */ }
+        try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
+      } else {
+        // Incremental: only orders changed since the cursor (gte re-includes the
+        // boundary row — harmless, merged by id — so no edit is ever missed).
+        const cursor = syncCursorRef.current;
+        const [delta, inv] = await Promise.all([
+          sb.query("orders", `updated_at=gte.${encodeURIComponent(cursor)}&order=updated_at.desc`),
+          sb.query("inventory"),
+        ]);
+        if (delta && delta.length) {
+          setOrders(prev => {
+            const byId = new Map(prev.map(x => [x.id, x]));
+            delta.forEach(x => byId.set(x.id, x));
+            return [...byId.values()].sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+          });
+          const m = maxTs(delta);
+          if (m && (!cursor || m > cursor)) syncCursorRef.current = m;
+        }
+        setInventory(inv || []);
+        setSyncError(false);
+      }
       __probe.on = false;
-      const __rows = (o || []).length;
       const __ent = Object.entries(__probe.bytes).sort((x, y) => y[1] - x[1]);
       const __tot = __ent.reduce((s, [, b]) => s + b, 0);
-      console.log(`[egress-probe] one refresh ≈ ${(__tot / 1024).toFixed(0)} KB decompressed (${__rows} orders) — ` + __ent.map(([k, b]) => `${k} ${(b / 1024).toFixed(0)}KB`).join(" · ") + " · NOTE: actual billed egress is gzipped, ~6-8x smaller");
+      console.log(`[egress-probe] ${doFull ? "FULL" : "incremental"} refresh ≈ ${(__tot / 1024).toFixed(1)} KB decompressed — ` + __ent.map(([k, b]) => `${k} ${(b / 1024).toFixed(1)}KB`).join(" · ") + " · billed egress is gzipped ~6-8x smaller");
     } catch (e) {
       __probe.on = false;
       if (!loadedRef.current) {
         if (retries > 1) {
           await new Promise(r => setTimeout(r, 1500));
-          return loadAll(retries - 1);
+          return loadAll(retries - 1, incremental);
         }
         setLoadError(e.message);
         setLoaded(true);
@@ -964,7 +1000,7 @@ export default function InfinistoresCRM() {
     await loadAll();
   };
 
-  const doSignOut = () => { auth.signOut(); setAuthed(false); setMe(null); setLoaded(false); loadedRef.current = false; };
+  const doSignOut = () => { auth.signOut(); setAuthed(false); setMe(null); setLoaded(false); loadedRef.current = false; syncCursorRef.current = null; pollCountRef.current = 0; };
 
   useEffect(() => {
     (async () => {
@@ -991,7 +1027,7 @@ export default function InfinistoresCRM() {
   // each refresh re-downloads the full orders table (~98% of egress), so a 3x
   // longer interval cuts egress ~67% for ~1 extra minute of staleness. The
   // durable fix is incremental sync (fetch only orders changed since last poll).
-  useEffect(() => { if (!authed) return; const i = setInterval(loadAll, 90000); return () => clearInterval(i); }, [authed]);
+  useEffect(() => { if (!authed) return; const i = setInterval(() => loadAll(3, true), 90000); return () => clearInterval(i); }, [authed]);
 
   // Load status history when an order detail is opened (best-effort)
   useEffect(() => {
