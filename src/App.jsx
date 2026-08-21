@@ -987,8 +987,11 @@ export default function InfinistoresCRM() {
     })();
   }, []);
 
-  // Auto-refresh every 30s for multi-device sync (only while signed in)
-  useEffect(() => { if (!authed) return; const i = setInterval(loadAll, 30000); return () => clearInterval(i); }, [authed]);
+  // Auto-refresh for multi-device sync (only while signed in). 90s (was 30s) —
+  // each refresh re-downloads the full orders table (~98% of egress), so a 3x
+  // longer interval cuts egress ~67% for ~1 extra minute of staleness. The
+  // durable fix is incremental sync (fetch only orders changed since last poll).
+  useEffect(() => { if (!authed) return; const i = setInterval(loadAll, 90000); return () => clearInterval(i); }, [authed]);
 
   // Load status history when an order detail is opened (best-effort)
   useEffect(() => {
