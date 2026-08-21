@@ -33,14 +33,6 @@ async function responseError(r, fallback) {
   return body?.message || body?.details || body?.hint || fallback;
 }
 
-// TEMP egress probe — measures decompressed bytes per table during a poll.
-// Remove once we've confirmed the incremental-sync payload drop.
-const __probe = { on: false, bytes: {} };
-async function __measure(table, r) {
-  if (!__probe.on) return;
-  try { const t = await r.clone().text(); __probe.bytes[table] = (__probe.bytes[table] || 0) + t.length; } catch { /* noop */ }
-}
-
 // Incremental sync: full reconcile every N polls catches deletes / reassignments
 // that a "changed since" query can't see.
 const FULL_RECONCILE_EVERY = 15;
@@ -64,7 +56,6 @@ const sb = {
   async query(table, params = "") {
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: this.headers });
     if (!r.ok) throw new Error(`Failed to load ${table} (${r.status})`);
-    await __measure(table, r);
     return r.json();
   },
   async queryAll(table, params = "") {
@@ -77,7 +68,6 @@ const sb = {
         headers: { ...this.headers, "Range-Unit": "items", "Range": `${offset}-${offset + pageSize - 1}` }
       });
       if (!r.ok) throw new Error(`Failed to load ${table} (${r.status})`);
-      await __measure(table, r);
       const rows = await r.json();
       all = all.concat(rows);
       if (rows.length < pageSize) break;
@@ -907,8 +897,6 @@ export default function InfinistoresCRM() {
       let doFull = !incremental || !loadedRef.current || !syncCursorRef.current;
       if (incremental && !doFull) { const n = ++pollCountRef.current; if (n % FULL_RECONCILE_EVERY === 0) doFull = true; }
 
-      __probe.on = true; __probe.bytes = {};
-
       if (doFull) {
         const [o, a, p, inv, t] = await Promise.all([
           sb.queryAll("orders", "order=created_at.desc"),
@@ -957,12 +945,7 @@ export default function InfinistoresCRM() {
         setInventory(inv || []);
         setSyncError(false);
       }
-      __probe.on = false;
-      const __ent = Object.entries(__probe.bytes).sort((x, y) => y[1] - x[1]);
-      const __tot = __ent.reduce((s, [, b]) => s + b, 0);
-      console.log(`[egress-probe] ${doFull ? "FULL" : "incremental"} refresh ≈ ${(__tot / 1024).toFixed(1)} KB decompressed — ` + __ent.map(([k, b]) => `${k} ${(b / 1024).toFixed(1)}KB`).join(" · ") + " · billed egress is gzipped ~6-8x smaller");
     } catch (e) {
-      __probe.on = false;
       if (!loadedRef.current) {
         if (retries > 1) {
           await new Promise(r => setTimeout(r, 1500));
