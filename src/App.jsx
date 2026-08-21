@@ -905,7 +905,7 @@ export default function InfinistoresCRM() {
         return;
       }
       let doFull = !incremental || !loadedRef.current || !syncCursorRef.current;
-      if (incremental && !doFull) { const n = pollCountRef.current++; if (n % FULL_RECONCILE_EVERY === 0) doFull = true; }
+      if (incremental && !doFull) { const n = ++pollCountRef.current; if (n % FULL_RECONCILE_EVERY === 0) doFull = true; }
 
       __probe.on = true; __probe.bytes = {};
 
