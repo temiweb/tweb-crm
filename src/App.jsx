@@ -33,6 +33,14 @@ async function responseError(r, fallback) {
   return body?.message || body?.details || body?.hint || fallback;
 }
 
+// TEMP egress probe — measures decompressed bytes per table during a poll.
+// Remove once we've captured the baseline vs Stage 1.
+const __probe = { on: false, bytes: {} };
+async function __measure(table, r) {
+  if (!__probe.on) return;
+  try { const t = await r.clone().text(); __probe.bytes[table] = (__probe.bytes[table] || 0) + t.length; } catch { /* noop */ }
+}
+
 const sb = {
   get headers() { return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${authToken || SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" }; },
   async fetch(url, options = {}) {
@@ -51,6 +59,7 @@ const sb = {
   async query(table, params = "") {
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: this.headers });
     if (!r.ok) throw new Error(`Failed to load ${table} (${r.status})`);
+    await __measure(table, r);
     return r.json();
   },
   async queryAll(table, params = "") {
@@ -63,6 +72,7 @@ const sb = {
         headers: { ...this.headers, "Range-Unit": "items", "Range": `${offset}-${offset + pageSize - 1}` }
       });
       if (!r.ok) throw new Error(`Failed to load ${table} (${r.status})`);
+      await __measure(table, r);
       const rows = await r.json();
       all = all.concat(rows);
       if (rows.length < pageSize) break;
@@ -883,6 +893,7 @@ export default function InfinistoresCRM() {
         showToast("Your session expired — please sign in again.");
         return;
       }
+      __probe.on = true; __probe.bytes = {};
       const [o, a, p, inv, t] = await Promise.all([
         sb.queryAll("orders", "order=created_at.desc"),
         sb.query("agents", "order=created_at.asc"),
@@ -909,7 +920,13 @@ export default function InfinistoresCRM() {
         setWaybills(wb || []); setPurchases(pu || []); setFaulty(fa || []); setTransfers(tr || []);
       } catch { /* inventory tables not present yet */ }
       try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
+      __probe.on = false;
+      const __rows = (o || []).length;
+      const __ent = Object.entries(__probe.bytes).sort((x, y) => y[1] - x[1]);
+      const __tot = __ent.reduce((s, [, b]) => s + b, 0);
+      console.log(`[egress-probe] one refresh ≈ ${(__tot / 1024).toFixed(0)} KB decompressed (${__rows} orders) — ` + __ent.map(([k, b]) => `${k} ${(b / 1024).toFixed(0)}KB`).join(" · ") + " · NOTE: actual billed egress is gzipped, ~6-8x smaller");
     } catch (e) {
+      __probe.on = false;
       if (!loadedRef.current) {
         if (retries > 1) {
           await new Promise(r => setTimeout(r, 1500));
