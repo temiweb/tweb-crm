@@ -33,9 +33,6 @@ async function responseError(r, fallback) {
   return body?.message || body?.details || body?.hint || fallback;
 }
 
-// Incremental sync: full reconcile every N polls catches deletes / reassignments
-// that a "changed since" query can't see.
-const FULL_RECONCILE_EVERY = 15;
 const maxTs = (rows) => { let m = null; (rows || []).forEach(o => { const u = o.updated_at || o.created_at; if (u && (!m || u > m)) m = u; }); return m; };
 
 const sb = {
@@ -74,6 +71,13 @@ const sb = {
       offset += pageSize;
     }
     return all;
+  },
+  async count(table, params = "") {
+    const query = `${params}${params ? "&" : ""}select=id`;
+    const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, { method: "HEAD", headers: { ...this.headers, Prefer: "count=exact" } });
+    if (!r.ok) throw new Error(`Failed to count ${table} (${r.status})`);
+    const total = r.headers.get("content-range")?.split("/").pop();
+    return total && total !== "*" ? +total : null;
   },
   async insert(table, data) {
     const r = await this.fetch(`${SUPABASE_URL}/rest/v1/${table}`, { method: "POST", headers: this.headers, body: JSON.stringify(Array.isArray(data) ? data : [data]) });
@@ -820,7 +824,7 @@ export default function InfinistoresCRM() {
   // escalate to the full-screen Connection Error instead of the ⚠ Offline badge.
   const loadedRef = useRef(false);
   const syncCursorRef = useRef(null); // max orders.updated_at seen — the incremental-sync cursor
-  const pollCountRef = useRef(0);     // counts incremental polls, for the periodic full reconcile
+  const ordersRef = useRef([]);
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [syncError, setSyncError] = useState(false);
@@ -878,13 +882,12 @@ export default function InfinistoresCRM() {
   const cur = country === "ghana" ? "GH₵" : "₦";
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => { const c = () => setIsMobile(window.innerWidth < 768); c(); window.addEventListener("resize", c); return () => window.removeEventListener("resize", c); }, []);
+  useEffect(() => { ordersRef.current = orders; }, [orders]);
 
   // ─── LOAD ALL DATA ───
-  // Default is a FULL load (login, manual refresh, error-recovery). Only the 90s
-  // poll passes incremental=true, which fetches just the orders changed since the
-  // last sync — except every FULL_RECONCILE_EVERY polls it does a full load to
-  // catch deletes / reassignments a "changed since" query can't see.
-  const loadAll = async (retries = 3, incremental = false) => {
+  // Login and manual refresh do a full load. Polls and post-save refreshes fetch
+  // only changed orders; polls also use a zero-body HEAD count to detect deletes.
+  const loadAll = async (retries = 3, incremental = false, checkForDeletes = false) => {
     try {
       // If the session can't be refreshed, sign out cleanly — otherwise the
       // queries would run with the anon key and RLS would return empty arrays,
@@ -894,8 +897,7 @@ export default function InfinistoresCRM() {
         showToast("Your session expired — please sign in again.");
         return;
       }
-      let doFull = !incremental || !loadedRef.current || !syncCursorRef.current;
-      if (incremental && !doFull) { const n = ++pollCountRef.current; if (n % FULL_RECONCILE_EVERY === 0) doFull = true; }
+      const doFull = !incremental || !loadedRef.current || !syncCursorRef.current;
 
       if (doFull) {
         const [o, a, p, inv, t] = await Promise.all([
@@ -905,7 +907,7 @@ export default function InfinistoresCRM() {
           sb.query("inventory"),
           sb.query("templates"),
         ]);
-        setOrders(o || []); setAgents(a || []); setProducts(p || []); setInventory(inv || []);
+        setOrders(o || []); ordersRef.current = o || []; setAgents(a || []); setProducts(p || []); setInventory(inv || []);
         const tMap = {};
         (t || []).forEach(r => { tMap[r.status_key] = r.message; });
         setTemplates(tMap);
@@ -929,15 +931,21 @@ export default function InfinistoresCRM() {
         // Incremental: only orders changed since the cursor (gte re-includes the
         // boundary row — harmless, merged by id — so no edit is ever missed).
         const cursor = syncCursorRef.current;
-        const [delta, inv] = await Promise.all([
+        const [delta, inv, remoteOrderCount] = await Promise.all([
           sb.query("orders", `updated_at=gte.${encodeURIComponent(cursor)}&order=updated_at.desc`),
           sb.query("inventory"),
+          checkForDeletes ? sb.count("orders") : Promise.resolve(null),
         ]);
+        if (remoteOrderCount != null && remoteOrderCount !== ordersRef.current.length) {
+          return loadAll(retries, false);
+        }
         if (delta && delta.length) {
           setOrders(prev => {
             const byId = new Map(prev.map(x => [x.id, x]));
             delta.forEach(x => byId.set(x.id, x));
-            return [...byId.values()].sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+            const next = [...byId.values()].sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+            ordersRef.current = next;
+            return next;
           });
           const m = maxTs(delta);
           if (m && (!cursor || m > cursor)) syncCursorRef.current = m;
@@ -949,7 +957,7 @@ export default function InfinistoresCRM() {
       if (!loadedRef.current) {
         if (retries > 1) {
           await new Promise(r => setTimeout(r, 1500));
-          return loadAll(retries - 1, incremental);
+          return loadAll(retries - 1, incremental, checkForDeletes);
         }
         setLoadError(e.message);
         setLoaded(true);
@@ -958,6 +966,20 @@ export default function InfinistoresCRM() {
         setSyncError(true);
       }
     }
+  };
+
+  const refreshInventoryData = async () => {
+    const [a, p, inv, wb, pu, fa, tr] = await Promise.all([
+      sb.query("agents", "order=created_at.asc"),
+      sb.query("products", "order=created_at.asc"),
+      sb.query("inventory"),
+      sb.query("waybills", "order=created_at.desc"),
+      sb.query("stock_purchases", "order=created_at.desc"),
+      sb.query("faulty_stock", "order=created_at.desc"),
+      sb.query("stock_transfers", "order=created_at.desc"),
+    ]);
+    setAgents(a || []); setProducts(p || []); setInventory(inv || []);
+    setWaybills(wb || []); setPurchases(pu || []); setFaulty(fa || []); setTransfers(tr || []);
   };
   // ─── AUTH: current staff + session restore ───
   const loadMe = async () => {
@@ -983,7 +1005,7 @@ export default function InfinistoresCRM() {
     await loadAll();
   };
 
-  const doSignOut = () => { auth.signOut(); setAuthed(false); setMe(null); setLoaded(false); loadedRef.current = false; syncCursorRef.current = null; pollCountRef.current = 0; };
+  const doSignOut = () => { auth.signOut(); setAuthed(false); setMe(null); setLoaded(false); loadedRef.current = false; syncCursorRef.current = null; ordersRef.current = []; };
 
   useEffect(() => {
     (async () => {
@@ -1010,7 +1032,7 @@ export default function InfinistoresCRM() {
   // each refresh re-downloads the full orders table (~98% of egress), so a 3x
   // longer interval cuts egress ~67% for ~1 extra minute of staleness. The
   // durable fix is incremental sync (fetch only orders changed since last poll).
-  useEffect(() => { if (!authed) return; const i = setInterval(() => loadAll(3, true), 90000); return () => clearInterval(i); }, [authed]);
+  useEffect(() => { if (!authed) return; const i = setInterval(() => loadAll(3, true, true), 90000); return () => clearInterval(i); }, [authed]);
 
   // Load status history when an order detail is opened (best-effort)
   useEffect(() => {
@@ -1330,7 +1352,7 @@ export default function InfinistoresCRM() {
         await sb.insert("orders", dbRows.slice(i, i + 50));
       }
       setCountry(det);
-      await loadAll();
+      await loadAll(3, true);
     } catch (err) { showToast("Import failed: " + err.message); }
     setSaving(false); setShowImport(false); e.target.value = "";
   };
@@ -1343,14 +1365,14 @@ export default function InfinistoresCRM() {
     try {
       await sb.update("orders", { id }, { status, ...stamp, ...cost });
       logStatus(id, order?.status, status);
-      await loadAll();
-    } catch (err) { showToast(err.message); await loadAll(); }
+      await loadAll(3, true);
+    } catch (err) { showToast(err.message); await loadAll(3, true); }
   };
 
   const doAssign = async (orderId, agentId) => {
     const a = agents.find(x => x.id === agentId);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
-    try { await sb.update("orders", { id: orderId }, { agent_id: agentId, agent_name: a?.name || "" }); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.update("orders", { id: orderId }, { agent_id: agentId, agent_name: a?.name || "" }); await loadAll(3, true); } catch (err) { showToast(err.message); await loadAll(3, true); }
     setShowAssign(null);
   };
 
@@ -1363,15 +1385,15 @@ export default function InfinistoresCRM() {
     try {
       await sb.update("orders", { id }, data);
       logStatus(id, oldOrder?.status, data.status);
-      await loadAll();
-    } catch (err) { showToast(err.message); await loadAll(); }
+      await loadAll(3, true);
+    } catch (err) { showToast(err.message); await loadAll(3, true); }
     setEditOrder(null);
   };
 
   const doDeleteOrder = async (id) => {
     if (!window.confirm("Delete this order? This cannot be undone.")) return;
     setOrders(prev => prev.filter(o => o.id !== id));
-    try { await sb.delete("orders", { id }); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.delete("orders", { id }); await loadAll(3, true); } catch (err) { showToast(err.message); await loadAll(3, true); }
   };
 
   const doBulkStatus = async (status) => {
@@ -1382,8 +1404,8 @@ export default function InfinistoresCRM() {
     try {
       await sb.rpc("bulk_set_order_status", { p_order_ids: ids, p_status: status });
       ids.forEach(id => logStatus(id, prevStatus.get(id), status));
-      await loadAll();
-    } catch (err) { showToast(err.message); await loadAll(); }
+      await loadAll(3, true);
+    } catch (err) { showToast(err.message); await loadAll(3, true); }
   };
 
   const doBulkDelete = async () => {
@@ -1391,7 +1413,7 @@ export default function InfinistoresCRM() {
     const ids = [...sel];
     setOrders(prev => prev.filter(o => !sel.has(o.id)));
     setSel(new Set());
-    try { await sb.deleteIn("orders", "id", ids); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.deleteIn("orders", "id", ids); await loadAll(3, true); } catch (err) { showToast(err.message); await loadAll(3, true); }
   };
 
   const doBulkAssign = async (agentId) => {
@@ -1399,7 +1421,7 @@ export default function InfinistoresCRM() {
     const ids = [...sel];
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, agent_id: agentId, agent_name: a?.name || "" } : o));
     setSel(new Set());
-    try { await sb.updateIn("orders", "id", ids, { agent_id: agentId, agent_name: a?.name || "" }); await loadAll(); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.updateIn("orders", "id", ids, { agent_id: agentId, agent_name: a?.name || "" }); await loadAll(3, true); } catch (err) { showToast(err.message); await loadAll(3, true); }
   };
 
   // ─── Phase 7: assign orders to a caller (by their auth user id) ───
@@ -1408,11 +1430,11 @@ export default function InfinistoresCRM() {
     const patch = { assigned_to: authUid || null, assigned_at: authUid ? new Date().toISOString() : null };
     setOrders(prev => prev.map(o => sel.has(o.id) ? { ...o, ...patch } : o));
     setSel(new Set());
-    try { await Promise.all(ids.map(id => sb.update("orders", { id }, patch))); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await Promise.all(ids.map(id => sb.update("orders", { id }, patch))); await loadAll(3, true); } catch (err) { showToast(err.message); await loadAll(3, true); }
   };
 
   const doAddAgent = async (data) => {
-    try { await sb.insert("agents", { ...data, country }); await loadAll(); } catch (err) { showToast(err.message); }
+    try { await sb.insert("agents", { ...data, country }); await refreshInventoryData(); } catch (err) { showToast(err.message); }
     setShowAddAgent(false);
   };
 
@@ -1428,20 +1450,20 @@ export default function InfinistoresCRM() {
     try {
       if (stock.length) await sb.delete("inventory", { agent_id: id });
       await sb.delete("agents", { id });
-      await loadAll();
+      await refreshInventoryData();
       showToast("Agent deleted", "success");
-    } catch (err) { showToast(err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doEditAgent = async (data) => {
     const id = editAgent.id;
     setAgents(prev => prev.map(a => a.id === id ? { ...a, ...data } : a));
     setEditAgent(null);
-    try { await sb.update("agents", { id }, data); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.update("agents", { id }, data); } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doAddProduct = async (name) => {
-    try { await sb.insert("products", { name }); await loadAll(); } catch (err) { showToast(err.message); }
+    try { await sb.insert("products", { name }); await refreshInventoryData(); } catch (err) { showToast(err.message); }
     setShowAddProduct(false);
   };
 
@@ -1449,7 +1471,7 @@ export default function InfinistoresCRM() {
     if (!editProduct?.id) return;
     try {
       await sb.rpc("rename_unused_product", { p_product_id: editProduct.id, p_new_name: name });
-      await loadAll();
+      await refreshInventoryData();
       setEditProduct(null);
       showToast("Product renamed", "success");
     } catch (err) { showToast(err.message); }
@@ -1459,7 +1481,7 @@ export default function InfinistoresCRM() {
     if (!window.confirm(`Delete ${product.name}? This only works if it has no stock or transaction history.`)) return;
     try {
       await sb.rpc("delete_unused_product", { p_product_id: product.id });
-      await loadAll();
+      await refreshInventoryData();
       showToast("Product deleted", "success");
     } catch (err) { showToast(err.message); }
   };
@@ -1468,9 +1490,9 @@ export default function InfinistoresCRM() {
     const existing = inventory.find(i => i.agent_id === agentId && i.product_name === productName);
     if (existing) {
       setInventory(prev => prev.map(i => i.id === existing.id ? { ...i, qty } : i));
-      try { await sb.update("inventory", { id: existing.id }, { qty }); } catch (err) { showToast(err.message); await loadAll(); }
+      try { await sb.update("inventory", { id: existing.id }, { qty }); } catch (err) { showToast(err.message); await refreshInventoryData(); }
     } else {
-      try { const res = await sb.insert("inventory", { agent_id: agentId, product_name: productName, qty }); setInventory(prev => [...prev, ...(res || [])]); } catch (err) { showToast(err.message); await loadAll(); }
+      try { const res = await sb.insert("inventory", { agent_id: agentId, product_name: productName, qty }); setInventory(prev => [...prev, ...(res || [])]); } catch (err) { showToast(err.message); await refreshInventoryData(); }
     }
   };
 
@@ -1478,13 +1500,13 @@ export default function InfinistoresCRM() {
   const doSetWarehouseQty = async (prod, qty) => {
     const q = Math.max(0, qty);
     setProducts(prev => prev.map(p => p.id === prod.id ? { ...p, warehouse_qty: q } : p));
-    try { await sb.update("products", { id: prod.id }, { warehouse_qty: q }); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.update("products", { id: prod.id }, { warehouse_qty: q }); } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doAddPurchase = async (data) => {
     try {
       await sb.insert("stock_purchases", data);
-      await loadAll();
+      await refreshInventoryData();
     } catch (err) { showToast(err.message); }
     setShowAddPurchase(false);
   };
@@ -1494,7 +1516,7 @@ export default function InfinistoresCRM() {
     if (!id) return;
     try {
       await sb.update("stock_purchases", { id }, data);
-      await loadAll();
+      await refreshInventoryData();
       setEditPurchase(null);
       showToast("Purchase updated", "success");
     } catch (err) { showToast(err.message); }
@@ -1504,7 +1526,7 @@ export default function InfinistoresCRM() {
     if (!window.confirm(`Delete this ${purchase.quantity}-unit ${purchase.product_name} purchase? Warehouse stock will be reduced by the same quantity.`)) return;
     try {
       await sb.delete("stock_purchases", { id: purchase.id });
-      await loadAll();
+      await refreshInventoryData();
       showToast("Purchase deleted and warehouse stock corrected", "success");
     } catch (err) { showToast(err.message); }
   };
@@ -1522,19 +1544,19 @@ export default function InfinistoresCRM() {
     if (!id) return;
     try {
       await sb.update("waybills", { id }, data);
-      await loadAll();
+      await refreshInventoryData();
       setEditWaybill(null);
       showToast("Waybill updated and stock reconciled", "success");
-    } catch (err) { showToast(err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doDeleteWaybill = async (waybill) => {
     if (!window.confirm(`Delete this ${waybill.quantity}-unit ${waybill.product_name} waybill? If it was delivered, stock will be returned to the warehouse and removed from the agent.`)) return;
     try {
       await sb.delete("waybills", { id: waybill.id });
-      await loadAll();
+      await refreshInventoryData();
       showToast("Waybill deleted and stock reconciled", "success");
-    } catch (err) { showToast(err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doSetWaybillStatus = async (wb, status) => {
@@ -1543,14 +1565,14 @@ export default function InfinistoresCRM() {
     setWaybills(prev => prev.map(w => w.id === wb.id ? { ...w, ...patch } : w));
     try {
       await sb.update("waybills", { id: wb.id }, patch);
-      await loadAll();
-    } catch (err) { showToast(err.message); await loadAll(); }
+      await refreshInventoryData();
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doAddFaulty = async (data) => {
     try {
       await sb.insert("faulty_stock", { ...data, agent_id: data.agent_id || null });
-      await loadAll();
+      await refreshInventoryData();
     } catch (err) { showToast(err.message); }
     setShowAddFaulty(false);
   };
@@ -1560,26 +1582,26 @@ export default function InfinistoresCRM() {
     if (!id) return;
     try {
       await sb.update("faulty_stock", { id }, data);
-      await loadAll();
+      await refreshInventoryData();
       setEditFaulty(null);
       showToast("Faulty stock updated and inventory reconciled", "success");
-    } catch (err) { showToast(err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doDeleteFaulty = async (record) => {
     if (!window.confirm(`Delete this ${record.quantity}-unit faulty stock record? The quantity will be returned to its original stock location.`)) return;
     try {
       await sb.delete("faulty_stock", { id: record.id });
-      await loadAll();
+      await refreshInventoryData();
       showToast("Faulty stock deleted and inventory reconciled", "success");
-    } catch (err) { showToast(err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doAddTransfer = async (data) => {
     try {
       await sb.insert("stock_transfers", data);
-      await loadAll();
-    } catch (err) { showToast(err.message); await loadAll(); }
+      await refreshInventoryData();
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
     setShowAddTransfer(false);
   };
 
@@ -1588,19 +1610,19 @@ export default function InfinistoresCRM() {
     if (!id) return;
     try {
       await sb.update("stock_transfers", { id }, data);
-      await loadAll();
+      await refreshInventoryData();
       setEditTransfer(null);
       showToast("Transfer updated and stock reconciled", "success");
-    } catch (err) { showToast(err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doDeleteTransfer = async (transfer) => {
     if (!window.confirm(`Delete this ${transfer.quantity}-unit ${transfer.product_name} transfer? Stock will be returned to the sending agent and removed from the receiving agent.`)) return;
     try {
       await sb.delete("stock_transfers", { id: transfer.id });
-      await loadAll();
+      await refreshInventoryData();
       showToast("Transfer deleted and stock reconciled", "success");
-    } catch (err) { showToast(err.message); await loadAll(); }
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
   const doInviteStaff = async (data) => {
@@ -1638,7 +1660,7 @@ export default function InfinistoresCRM() {
   };
 
   const doAddOrder = async (data) => {
-    try { await sb.insert("orders", { ...data, country }); await loadAll(); } catch (err) { showToast(err.message); }
+    try { await sb.insert("orders", { ...data, country }); await loadAll(3, true); } catch (err) { showToast(err.message); }
     setShowAddOrder(false);
   };
 
