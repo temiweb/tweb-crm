@@ -2099,17 +2099,17 @@ export default function InfinistoresCRM() {
 
       {country === "nigeria" && <Card style={{ padding: "18px", marginBottom: "14px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "14px", flexWrap: "wrap" }}>
-          <div><div className="cx-section-t">Decision overview</div><div className="cx-sub">Nigeria only · mature delivery cohorts, live stock, and finance records already in Supabase</div></div>
+          <div><div className="cx-section-t">Decision overview</div><div className="cx-sub">Nigeria only · selected-period results use the order-received date</div></div>
           <Btn v="secondary" sz="xs" onClick={() => setDecisionRefreshKey(value => value + 1)} disabled={decisionLoading}><RefreshCw size={13} />{decisionLoading ? "Loading" : "Refresh"}</Btn>
         </div>
         {decisionError ? <div style={{ padding: "12px 14px", borderRadius: T.r, background: T.warningBg, color: T.warning, fontSize: "12px", fontWeight: 600 }}>Decision metrics are unavailable: {decisionError}</div> : decisionLoading && !decisionMetrics ? <div style={{ color: T.textMuted, fontSize: "13px" }}>Loading a compact decision summary…</div> : decisionMetrics && <>
           <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: "10px", marginBottom: "14px" }}>
             {[
-              { l: "Mature delivery rate", v: matureDeliveryRate == null ? "—" : `${matureDeliveryRate}%`, d: matureResolved ? `${decisionOverview.mature_delivered} of ${matureResolved} resolved` : "No mature resolved orders" },
-              { l: "Delivered units", v: Number(decisionOverview.delivered_units || 0).toLocaleString(), d: averageUnitsPerDeliveredOrder == null ? "No delivered orders" : `${averageUnitsPerDeliveredOrder.toFixed(1)} units per order` },
-              { l: "Net revenue recorded", v: decisionMoney(decisionOverview.net_revenue), d: `${Number(decisionOverview.delivered_orders || 0).toLocaleString()} delivered orders` },
+              { l: "7-day cohort delivery rate", v: matureDeliveryRate == null ? "-" : `${matureDeliveryRate}%`, d: matureResolved ? `${decisionOverview.mature_delivered} of ${matureResolved} resolved` : "No mature resolved orders" },
+              { l: "Delivered units", v: Number(decisionOverview.delivered_units || 0).toLocaleString(), d: averageUnitsPerDeliveredOrder == null ? "No delivered orders" : `${averageUnitsPerDeliveredOrder.toFixed(1)} units per delivered order` },
+              { l: "Delivered sales", v: decisionMoney(decisionOverview.net_revenue), d: `${Number(decisionOverview.delivered_orders || 0).toLocaleString()} orders received this period, after delivery fees` },
               { l: "Tagged ad spend", v: decisionMoney(decisionFinance.tagged_ad_spend), d: Number(decisionFinance.unallocated_ad_spend || 0) > 0 ? `${decisionMoney(decisionFinance.unallocated_ad_spend)} still unallocated` : "All recorded spend is tagged" },
-              { l: "Cash received", v: decisionMoney(decisionFinance.cash_received), d: "Received Nigeria cash-flow entries" },
+              { l: "Cash received", v: decisionMoney(decisionFinance.cash_received), d: "Cash-flow entries recorded this period" },
             ].map(card => <div key={card.l} style={{ padding: "12px", background: T.surfaceAlt, borderRadius: T.r }}>
               <div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>{card.l}</div>
               <div className="cx-num" style={{ fontSize: "20px", fontWeight: 800, margin: "3px 0" }}>{card.v}</div>
@@ -2117,23 +2117,23 @@ export default function InfinistoresCRM() {
             </div>)}
           </div>
           <div style={{ fontSize: "11px", color: T.textMuted, marginBottom: "10px" }}>
-            Delivery rate counts only orders created at least {decisionMetrics.maturity_days} days ago and resolved as delivered, cancelled, rejected, or failed delivery. {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} {Number(decisionOverview.mature_out_of_stock || 0) > 0 ? `${decisionOverview.mature_out_of_stock} out-of-stock orders are excluded.` : ""}
+            “7-day cohort” counts only orders received at least {decisionMetrics.maturity_days} days ago and resolved as delivered, cancelled, rejected, or failed delivery. {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} {Number(decisionOverview.mature_out_of_stock || 0) > 0 ? `${decisionOverview.mature_out_of_stock} out-of-stock orders are excluded.` : ""} Stock cover still uses units actually delivered in the last 28 days.
           </div>
           <div className="cx-section-t" style={{ margin: "16px 0 8px" }}>Product performance</div>
           <div style={{ overflowX: "auto" }}><table className="cx-table">
-            <thead><tr><th>Product</th><th className="r">Orders</th><th className="r">Mature rate</th><th className="r">Delivered</th><th className="r">Revenue</th><th className="r">Ad spend</th><th className="r">Ad / delivery</th><th className="r">Warehouse</th><th className="r">With agents</th><th className="r">Cover</th></tr></thead>
+            <thead><tr><th>Product</th><th className="r">Orders</th><th className="r">7-day cohort rate</th><th className="r">Delivered orders / units</th><th className="r">Delivered sales</th><th className="r">Ad spend</th><th className="r">Ad spend / delivery</th><th className="r">Warehouse</th><th className="r">With agents</th><th className="r">Cover</th></tr></thead>
             <tbody>{decisionProducts.map(product => {
               const cover = product.weeks_cover == null ? "-" : `${product.weeks_cover} wk`;
               const color = product.weeks_cover == null ? T.textMuted : product.weeks_cover < 2 ? T.danger : product.weeks_cover < 4 ? T.warning : T.accent;
               const rate = product.delivery_rate == null ? "-" : `${product.delivery_rate}%`;
               const revenueShare = product.revenue_share == null ? "" : ` · ${product.revenue_share}%`;
               const adPerDelivery = product.ad_spend_per_delivered_order == null ? "-" : decisionMoney(product.ad_spend_per_delivered_order);
-              return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} / {Number(product.delivered_units || 0).toLocaleString()}u</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td><td className="r cx-num">{Number(product.warehouse_qty || 0).toLocaleString()}</td><td className="r cx-num">{Number(product.agent_qty || 0).toLocaleString()}</td><td className="r cx-num" style={{ fontWeight: 800, color }}>{cover}</td></tr>;
+              return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} orders / {Number(product.delivered_units || 0).toLocaleString()} units</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td><td className="r cx-num">{Number(product.warehouse_qty || 0).toLocaleString()}</td><td className="r cx-num">{Number(product.agent_qty || 0).toLocaleString()}</td><td className="r cx-num" style={{ fontWeight: 800, color }}>{cover}</td></tr>;
             })}</tbody>
           </table></div>
           <div className="cx-section-t" style={{ margin: "18px 0 8px" }}>Package mix</div>
           <div style={{ overflowX: "auto" }}><table className="cx-table">
-            <thead><tr><th>Product</th><th>Tier</th><th className="r">Orders</th><th className="r">Mature rate</th><th className="r">Delivered</th><th className="r">Net revenue</th></tr></thead>
+            <thead><tr><th>Product</th><th>Tier</th><th className="r">Orders</th><th className="r">7-day cohort rate</th><th className="r">Delivered orders</th><th className="r">Delivered sales</th></tr></thead>
             <tbody>{decisionPackages.map(item => <tr key={`${item.product}-${item.unit_tier}`}><td className="td-product">{item.product}</td><td>{item.unit_tier} unit{Number(item.unit_tier) === 1 ? "" : "s"}</td><td className="r cx-num">{Number(item.orders || 0).toLocaleString()}</td><td className="r cx-num">{item.delivery_rate == null ? "-" : `${item.delivery_rate}%`}</td><td className="r cx-num">{Number(item.delivered_orders || 0).toLocaleString()}</td><td className="r cx-num">{decisionMoney(item.net_revenue)}</td></tr>)}</tbody>
           </table></div>
           <div style={{ marginTop: "8px", fontSize: "11px", color: T.textMuted }}>Package tiers use the saved order quantity, not the package label, so bundles such as “buy 2, get 1 free” are counted correctly.</div>

@@ -33,10 +33,7 @@ begin
   ), mature_orders as (
     select * from scoped_orders where created_at < v_mature_before
   ), delivery_period as (
-    select * from public.orders
-    where country = 'nigeria' and status = 'delivered'
-      and coalesce(delivered_at, created_at) >= v_from
-      and coalesce(delivered_at, created_at) < (v_to + 1)::timestamptz
+    select * from scoped_orders where status = 'delivered'
   )
   select jsonb_build_object(
     'period_orders', (select count(*) from scoped_orders),
@@ -56,10 +53,7 @@ begin
     select * from public.orders
     where country = 'nigeria' and created_at >= v_from and created_at < (v_to + 1)::timestamptz
   ), delivery_period as (
-    select * from public.orders
-    where country = 'nigeria' and status = 'delivered'
-      and coalesce(delivered_at, created_at) >= v_from
-      and coalesce(delivered_at, created_at) < (v_to + 1)::timestamptz
+    select * from scoped_orders where status = 'delivered'
   ), product_names as (
     select name as product from public.products
     union select distinct product from public.orders where country = 'nigeria' and product is not null
@@ -110,16 +104,14 @@ begin
   into v_products from product_with_total;
 
   with scoped_orders as (
-    select product, greatest(coalesce(nullif(qty, 0), 1), 1) as unit_tier, status, created_at
+    select product, greatest(coalesce(nullif(qty, 0), 1), 1) as unit_tier, status, created_at,
+      actual_price_collected, price, delivery_fee
     from public.orders
     where country = 'nigeria' and created_at >= v_from and created_at < (v_to + 1)::timestamptz
   ), delivery_period as (
-    select product, greatest(coalesce(nullif(actual_qty_delivered, 0), qty, 1), 1) as unit_tier,
+    select product, unit_tier,
       coalesce(nullif(actual_price_collected, 0), price, 0) - coalesce(delivery_fee, 0) as net_revenue
-    from public.orders
-    where country = 'nigeria' and status = 'delivered'
-      and coalesce(delivered_at, created_at) >= v_from
-      and coalesce(delivered_at, created_at) < (v_to + 1)::timestamptz
+    from scoped_orders where status = 'delivered'
   ), package_cohort as (
     select product, unit_tier, count(*) as orders,
       count(*) filter (where created_at < v_mature_before and status = 'delivered') as mature_delivered,
