@@ -785,18 +785,6 @@ function StatsStrip({ cards, ...period }) {
   );
 }
 
-function CountrySeg({ inRail, country, onChange, counts }) {
-  return (
-    <div className="cx-seg2" style={inRail ? { background: "rgba(255,255,255,0.07)", border: "none" } : {}}>
-      {[{ v: "nigeria", f: "🇳🇬", l: "NG" }, { v: "ghana", f: "🇬🇭", l: "GH" }].map(c => (
-        <button key={c.v} className={country === c.v ? "on" : ""} onClick={() => onChange(c.v)} style={inRail ? { color: country === c.v ? "#fff" : "rgba(255,255,255,0.55)", background: country === c.v ? "rgba(255,255,255,0.15)" : "transparent" } : {}}>
-          {c.f} {c.l} <span style={{ fontSize: "10px", fontWeight: 800, opacity: 0.7 }}>{counts[c.v] || 0}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 // ═══════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════
@@ -839,7 +827,9 @@ export default function InfinistoresCRM() {
   const [tab, setTab] = useState("orders");
   const [invTab, setInvTab] = useState("products");
   const [collapsed, setCollapsed] = useState(false);
-  const [country, setCountry] = useState("nigeria");
+  // Ghana is managed in the finance dashboard. CRM remains Nigeria-only while
+  // preserving all historical Ghana records in the shared database.
+  const country = "nigeria";
   const [search, setSearch] = useState("");
   const [statusF, setStatusF] = useState("all");
   const [stateF, setStateF] = useState("all");
@@ -851,6 +841,10 @@ export default function InfinistoresCRM() {
   const [statsRange, setStatsRange] = useState("all");
   const [statsFrom, setStatsFrom] = useState("");
   const [statsTo, setStatsTo] = useState("");
+  const [decisionMetrics, setDecisionMetrics] = useState(null);
+  const [decisionLoading, setDecisionLoading] = useState(false);
+  const [decisionError, setDecisionError] = useState("");
+  const [decisionRefreshKey, setDecisionRefreshKey] = useState(0);
   const [sel, setSel] = useState(new Set());
   const [showFilters, setShowFilters] = useState(false);
   const [ordersPage, setOrdersPage] = useState(0);
@@ -877,9 +871,7 @@ export default function InfinistoresCRM() {
   const [editProduct, setEditProduct] = useState(null);
   const [showAddStaff, setShowAddStaff] = useState(false);
   const [showAddOrder, setShowAddOrder] = useState(false);
-  const [importCountry, setImportCountry] = useState("auto");
-
-  const cur = country === "ghana" ? "GH₵" : "₦";
+  const cur = "₦";
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => { const c = () => setIsMobile(window.innerWidth < 768); c(); window.addEventListener("resize", c); return () => window.removeEventListener("resize", c); }, []);
   useEffect(() => { ordersRef.current = orders; }, [orders]);
@@ -1074,6 +1066,24 @@ export default function InfinistoresCRM() {
     else if (statsRange === "custom") { if (statsFrom) from = new Date(statsFrom); if (statsTo) to = new Date(statsTo + "T23:59:59"); }
     return { from, to };
   }, [statsRange, statsFrom, statsTo]);
+
+  const dateKey = d => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : null;
+  const decisionFrom = dateKey(periodRange.from);
+  const decisionTo = dateKey(periodRange.to);
+
+  // This is deliberately separate from the CRM's 90-second operational poll:
+  // it returns one aggregate JSON payload only while Analytics is open.
+  useEffect(() => {
+    if (!authed || !caps.analytics || tab !== "analytics" || country !== "nigeria") return;
+    let cancelled = false;
+    setDecisionLoading(true);
+    setDecisionError("");
+    sb.rpc("get_nigeria_decision_metrics", { p_from: decisionFrom, p_to: decisionTo, p_maturity_days: 7 })
+      .then(data => { if (!cancelled) setDecisionMetrics(data); })
+      .catch(error => { if (!cancelled) setDecisionError(error.message || "Could not load decision metrics."); })
+      .finally(() => { if (!cancelled) setDecisionLoading(false); });
+    return () => { cancelled = true; };
+  }, [authed, caps.analytics, tab, country, decisionFrom, decisionTo, decisionRefreshKey]);
 
   const filtered = useMemo(() => cOrders.filter(o => {
     if (statusF !== "all" && o.status !== statusF) return false;
@@ -1345,13 +1355,11 @@ export default function InfinistoresCRM() {
     setSaving(true);
     const text = await file.text();
     const rows = parseCSV(text);
-    const det = importCountry === "auto" ? (rows.length > 0 ? (Object.keys(rows[0]).some(k => k === "Your Region") ? "ghana" : "nigeria") : country) : importCountry;
-    const dbRows = csvToDbRows(rows, det);
+    const dbRows = csvToDbRows(rows, "nigeria");
     try {
       for (let i = 0; i < dbRows.length; i += 50) {
         await sb.insert("orders", dbRows.slice(i, i + 50));
       }
-      setCountry(det);
       await loadAll(3, true);
     } catch (err) { showToast("Import failed: " + err.message); }
     setSaving(false); setShowImport(false); e.target.value = "";
@@ -1730,8 +1738,6 @@ export default function InfinistoresCRM() {
   const navFlat = NAV.flatMap(g => g.items);
   const activeMeta = navFlat.find(n => n.id === tab) || navFlat[0];
 
-  const setCountrySafe = (v) => { setCountry(v); setStatusF("all"); setStateF("all"); setAgentF("all"); setCallerF("all"); setProductF("all"); setDupeF(false); setSel(new Set()); setShowFilters(false); };
-
   const showStatsStrip = tab === "orders" || tab === "analytics";
 
   // ── shared content blocks ──
@@ -1753,8 +1759,6 @@ export default function InfinistoresCRM() {
   // (Plain object, NOT useMemo — this line sits after the early returns above,
   // so a hook here would violate the Rules of Hooks.)
   const statsStrip = <StatsStrip cards={kpiCards} range={statsRange} setRange={setStatsRange} from={statsFrom} setFrom={setStatsFrom} to={statsTo} setTo={setStatsTo} />;
-  const countryCounts = { nigeria: orders.filter(o => o.country === "nigeria").length, ghana: orders.filter(o => o.country === "ghana").length };
-
   // ── ORDERS ──
   const OrdersScreen = (
     <div>
@@ -2077,12 +2081,65 @@ export default function InfinistoresCRM() {
     { v: funnel.neverReached, c: "#94a3b8", t: "Never reached" },
   ];
   const outTot = funnel.placed || 1;
+  const decisionOverview = decisionMetrics?.overview || {};
+  const decisionFinance = decisionMetrics?.finance || {};
+  const decisionProducts = decisionMetrics?.products || [];
+  const decisionPackages = decisionMetrics?.packages || [];
+  const matureResolved = Number(decisionOverview.mature_resolved || 0);
+  const matureDeliveryRate = matureResolved > 0 ? Math.round(Number(decisionOverview.mature_delivered || 0) / matureResolved * 100) : null;
+  const averageUnitsPerDeliveredOrder = Number(decisionOverview.delivered_orders || 0) > 0
+    ? Number(decisionOverview.delivered_units || 0) / Number(decisionOverview.delivered_orders || 0) : null;
+  const decisionMoney = value => `${cur}${Math.round(Number(value || 0)).toLocaleString()}`;
   const AnalyticsScreen = (
     <div>
       <div className="cx-head">
         <div><h1 className="cx-h1">Analytics</h1><div className="cx-sub">{country === "ghana" ? "Ghana" : "Nigeria"} · order-to-doorstep performance</div></div>
       </div>
       {statsStrip}
+
+      {country === "nigeria" && <Card style={{ padding: "18px", marginBottom: "14px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "14px", flexWrap: "wrap" }}>
+          <div><div className="cx-section-t">Decision overview</div><div className="cx-sub">Nigeria only · mature delivery cohorts, live stock, and finance records already in Supabase</div></div>
+          <Btn v="secondary" sz="xs" onClick={() => setDecisionRefreshKey(value => value + 1)} disabled={decisionLoading}><RefreshCw size={13} />{decisionLoading ? "Loading" : "Refresh"}</Btn>
+        </div>
+        {decisionError ? <div style={{ padding: "12px 14px", borderRadius: T.r, background: T.warningBg, color: T.warning, fontSize: "12px", fontWeight: 600 }}>Decision metrics are unavailable: {decisionError}</div> : decisionLoading && !decisionMetrics ? <div style={{ color: T.textMuted, fontSize: "13px" }}>Loading a compact decision summary…</div> : decisionMetrics && <>
+          <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: "10px", marginBottom: "14px" }}>
+            {[
+              { l: "Mature delivery rate", v: matureDeliveryRate == null ? "—" : `${matureDeliveryRate}%`, d: matureResolved ? `${decisionOverview.mature_delivered} of ${matureResolved} resolved` : "No mature resolved orders" },
+              { l: "Delivered units", v: Number(decisionOverview.delivered_units || 0).toLocaleString(), d: averageUnitsPerDeliveredOrder == null ? "No delivered orders" : `${averageUnitsPerDeliveredOrder.toFixed(1)} units per order` },
+              { l: "Net revenue recorded", v: decisionMoney(decisionOverview.net_revenue), d: `${Number(decisionOverview.delivered_orders || 0).toLocaleString()} delivered orders` },
+              { l: "Tagged ad spend", v: decisionMoney(decisionFinance.tagged_ad_spend), d: Number(decisionFinance.unallocated_ad_spend || 0) > 0 ? `${decisionMoney(decisionFinance.unallocated_ad_spend)} still unallocated` : "All recorded spend is tagged" },
+              { l: "Cash received", v: decisionMoney(decisionFinance.cash_received), d: "Received Nigeria cash-flow entries" },
+            ].map(card => <div key={card.l} style={{ padding: "12px", background: T.surfaceAlt, borderRadius: T.r }}>
+              <div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>{card.l}</div>
+              <div className="cx-num" style={{ fontSize: "20px", fontWeight: 800, margin: "3px 0" }}>{card.v}</div>
+              <div style={{ fontSize: "10px", color: T.textMuted }}>{card.d}</div>
+            </div>)}
+          </div>
+          <div style={{ fontSize: "11px", color: T.textMuted, marginBottom: "10px" }}>
+            Delivery rate counts only orders created at least {decisionMetrics.maturity_days} days ago and resolved as delivered, cancelled, rejected, or failed delivery. {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} {Number(decisionOverview.mature_out_of_stock || 0) > 0 ? `${decisionOverview.mature_out_of_stock} out-of-stock orders are excluded.` : ""}
+          </div>
+          <div className="cx-section-t" style={{ margin: "16px 0 8px" }}>Product performance</div>
+          <div style={{ overflowX: "auto" }}><table className="cx-table">
+            <thead><tr><th>Product</th><th className="r">Orders</th><th className="r">Mature rate</th><th className="r">Delivered</th><th className="r">Revenue</th><th className="r">Ad spend</th><th className="r">Ad / delivery</th><th className="r">Warehouse</th><th className="r">With agents</th><th className="r">Cover</th></tr></thead>
+            <tbody>{decisionProducts.map(product => {
+              const cover = product.weeks_cover == null ? "-" : `${product.weeks_cover} wk`;
+              const color = product.weeks_cover == null ? T.textMuted : product.weeks_cover < 2 ? T.danger : product.weeks_cover < 4 ? T.warning : T.accent;
+              const rate = product.delivery_rate == null ? "-" : `${product.delivery_rate}%`;
+              const revenueShare = product.revenue_share == null ? "" : ` · ${product.revenue_share}%`;
+              const adPerDelivery = product.ad_spend_per_delivered_order == null ? "-" : decisionMoney(product.ad_spend_per_delivered_order);
+              return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} / {Number(product.delivered_units || 0).toLocaleString()}u</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td><td className="r cx-num">{Number(product.warehouse_qty || 0).toLocaleString()}</td><td className="r cx-num">{Number(product.agent_qty || 0).toLocaleString()}</td><td className="r cx-num" style={{ fontWeight: 800, color }}>{cover}</td></tr>;
+            })}</tbody>
+          </table></div>
+          <div className="cx-section-t" style={{ margin: "18px 0 8px" }}>Package mix</div>
+          <div style={{ overflowX: "auto" }}><table className="cx-table">
+            <thead><tr><th>Product</th><th>Tier</th><th className="r">Orders</th><th className="r">Mature rate</th><th className="r">Delivered</th><th className="r">Net revenue</th></tr></thead>
+            <tbody>{decisionPackages.map(item => <tr key={`${item.product}-${item.unit_tier}`}><td className="td-product">{item.product}</td><td>{item.unit_tier} unit{Number(item.unit_tier) === 1 ? "" : "s"}</td><td className="r cx-num">{Number(item.orders || 0).toLocaleString()}</td><td className="r cx-num">{item.delivery_rate == null ? "-" : `${item.delivery_rate}%`}</td><td className="r cx-num">{Number(item.delivered_orders || 0).toLocaleString()}</td><td className="r cx-num">{decisionMoney(item.net_revenue)}</td></tr>)}</tbody>
+          </table></div>
+          <div style={{ marginTop: "8px", fontSize: "11px", color: T.textMuted }}>Package tiers use the saved order quantity, not the package label, so bundles such as “buy 2, get 1 free” are counted correctly.</div>
+          {Number(decisionOverview.missing_cogs_orders || 0) > 0 && <div style={{ marginTop: "10px", fontSize: "11px", color: T.warning }}>COGS is not shown yet: {decisionOverview.missing_cogs_orders} delivered order{Number(decisionOverview.missing_cogs_orders) === 1 ? " is" : "s are"} missing a cost snapshot.</div>}
+        </>}
+      </Card>}
 
       <Card style={{ padding: "18px", marginBottom: "14px" }}>
         <div className="cx-section-t" style={{ marginBottom: "12px" }}>This month vs last month <span className="cx-sub" style={{ marginLeft: "6px" }}>· to the same point in the month</span></div>
@@ -2284,9 +2341,7 @@ export default function InfinistoresCRM() {
   const modals = (
     <>
       <Modal open={showImport} onClose={() => setShowImport(false)} title="Import orders">
-        <p style={{ fontSize: "13px", color: T.textMuted, marginBottom: "12px" }}>Upload a WPForms CSV. Auto-detects Nigeria/Ghana.</p>
-        <div style={{ marginBottom: "12px" }}><label style={{ fontSize: "11px", fontWeight: 700, color: T.textMuted, display: "block", marginBottom: "4px", textTransform: "uppercase" }}>Country</label>
-          <select value={importCountry} onChange={e => setImportCountry(e.target.value)} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt }}><option value="auto">Auto-detect</option><option value="nigeria">🇳🇬 Nigeria</option><option value="ghana">🇬🇭 Ghana</option></select></div>
+        <p style={{ fontSize: "13px", color: T.textMuted, marginBottom: "12px" }}>Upload a Nigeria WPForms CSV.</p>
         <input type="file" accept=".csv" onChange={doImport} style={{ width: "100%", padding: "16px", border: `2px dashed ${T.border}`, borderRadius: T.r, fontSize: "13px", cursor: "pointer", boxSizing: "border-box", background: T.surfaceAlt }} />
         {saving && <div style={{ textAlign: "center", marginTop: "12px", color: T.accent, fontWeight: 700 }}>Importing…</div>}
       </Modal>
@@ -2456,7 +2511,6 @@ export default function InfinistoresCRM() {
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
             {saving && <span style={{ fontSize: "11px", fontWeight: 700, color: "#86efac" }}>Saving…</span>}
             {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ fontSize: "11px", fontWeight: 700, color: "#fca5a5" }}>⚠ Offline</span>}
-            <CountrySeg inRail country={country} onChange={setCountrySafe} counts={countryCounts} />
             <button onClick={doSignOut} title={`Sign out${me ? " — " + me.full_name : ""}`} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "rgba(255,255,255,0.7)", borderRadius: "8px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center" }}><LogOut size={15} /></button>
           </div>
         </div>
@@ -2517,7 +2571,6 @@ export default function InfinistoresCRM() {
             <div style={{ flex: 1 }} />
             {saving && <span style={{ color: T.accent, fontSize: "12px", fontWeight: 700, background: T.accentLight, padding: "5px 11px", borderRadius: "8px" }}>Saving…</span>}
             {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ color: T.danger, fontSize: "12px", fontWeight: 700, background: T.dangerBg, padding: "5px 11px", borderRadius: "8px", cursor: "pointer" }}>⚠ Offline</span>}
-            <CountrySeg country={country} onChange={setCountrySafe} counts={countryCounts} />
             <button className="cx-iconbtn" onClick={() => { setSyncError(false); loadAll(); }} title="Refresh"><RefreshCw size={16} /></button>
             {me && <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "0 4px 0 8px", borderLeft: `1px solid ${T.border}` }}>
               <div style={{ textAlign: "right", lineHeight: 1.15 }}>
