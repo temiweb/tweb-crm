@@ -2085,8 +2085,10 @@ export default function InfinistoresCRM() {
   const decisionFinance = decisionMetrics?.finance || {};
   const decisionProducts = decisionMetrics?.products || [];
   const decisionPackages = decisionMetrics?.packages || [];
+  const matureEligible = Number(decisionOverview.mature_eligible || 0);
   const matureResolved = Number(decisionOverview.mature_resolved || 0);
-  const matureDeliveryRate = matureResolved > 0 ? Math.round(Number(decisionOverview.mature_delivered || 0) / matureResolved * 100) : null;
+  const matureDeliveryRate = matureEligible > 0 ? Math.round(Number(decisionOverview.mature_delivered || 0) / matureEligible * 100) : null;
+  const resolvedDeliveryRate = matureResolved > 0 ? Math.round(Number(decisionOverview.mature_delivered || 0) / matureResolved * 100) : null;
   const averageUnitsPerDeliveredOrder = Number(decisionOverview.delivered_orders || 0) > 0
     ? Number(decisionOverview.delivered_units || 0) / Number(decisionOverview.delivered_orders || 0) : null;
   const decisionMoney = value => `${cur}${Math.round(Number(value || 0)).toLocaleString()}`;
@@ -2105,7 +2107,7 @@ export default function InfinistoresCRM() {
         {decisionError ? <div style={{ padding: "12px 14px", borderRadius: T.r, background: T.warningBg, color: T.warning, fontSize: "12px", fontWeight: 600 }}>Decision metrics are unavailable: {decisionError}</div> : decisionLoading && !decisionMetrics ? <div style={{ color: T.textMuted, fontSize: "13px" }}>Loading a compact decision summary…</div> : decisionMetrics && <>
           <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: "10px", marginBottom: "14px" }}>
             {[
-              { l: "7-day cohort delivery rate", v: matureDeliveryRate == null ? "-" : `${matureDeliveryRate}%`, d: matureResolved ? `${decisionOverview.mature_delivered} of ${matureResolved} resolved` : "No mature resolved orders" },
+              { l: "7-day cohort delivery rate", v: matureDeliveryRate == null ? "-" : `${matureDeliveryRate}%`, d: matureEligible ? `${decisionOverview.mature_delivered} of ${matureEligible} eligible orders` : "No eligible mature orders" },
               { l: "Delivered units", v: Number(decisionOverview.delivered_units || 0).toLocaleString(), d: averageUnitsPerDeliveredOrder == null ? "No delivered orders" : `${averageUnitsPerDeliveredOrder.toFixed(1)} units per delivered order` },
               { l: "Delivered sales", v: decisionMoney(decisionOverview.net_revenue), d: `${Number(decisionOverview.delivered_orders || 0).toLocaleString()} orders received this period, after delivery fees` },
               { l: "Tagged ad spend", v: decisionMoney(decisionFinance.tagged_ad_spend), d: Number(decisionFinance.unallocated_ad_spend || 0) > 0 ? `${decisionMoney(decisionFinance.unallocated_ad_spend)} still unallocated` : "All recorded spend is tagged" },
@@ -2116,8 +2118,16 @@ export default function InfinistoresCRM() {
               <div style={{ fontSize: "10px", color: T.textMuted }}>{card.d}</div>
             </div>)}
           </div>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+            {[
+              { l: "Delivered", v: decisionOverview.mature_delivered, c: T.accent, bg: T.accentLight },
+              { l: "Still open", v: decisionOverview.mature_open, c: T.warning, bg: T.warningBg },
+              { l: "Failed / cancelled", v: decisionOverview.mature_failed, c: T.danger, bg: T.dangerBg },
+              { l: "Out of stock (excluded)", v: decisionOverview.mature_out_of_stock, c: T.textMuted, bg: T.surfaceAlt },
+            ].map(outcome => <span key={outcome.l} style={{ padding: "4px 8px", borderRadius: "6px", color: outcome.c, background: outcome.bg, fontSize: "11px", fontWeight: 700 }}>{outcome.l}: {Number(outcome.v || 0).toLocaleString()}</span>)}
+          </div>
           <div style={{ fontSize: "11px", color: T.textMuted, marginBottom: "10px" }}>
-            “7-day cohort” counts only orders received at least {decisionMetrics.maturity_days} days ago and resolved as delivered, cancelled, rejected, or failed delivery. {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} {Number(decisionOverview.mature_out_of_stock || 0) > 0 ? `${decisionOverview.mature_out_of_stock} out-of-stock orders are excluded.` : ""} Stock cover still uses units actually delivered in the last 28 days.
+            “7-day cohort” includes every order received at least {decisionMetrics.maturity_days} days ago. The headline rate is delivered ÷ all eligible cohort orders, so still-open orders remain in the denominator; only out-of-stock orders are excluded. {resolvedDeliveryRate != null ? ` Among resolved orders only, the rate is ${resolvedDeliveryRate}% (${decisionOverview.mature_delivered} of ${matureResolved}).` : ""} {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} Stock cover still uses units actually delivered in the last 28 days.
           </div>
           <div className="cx-section-t" style={{ margin: "16px 0 8px" }}>Product performance</div>
           <div style={{ overflowX: "auto" }}><table className="cx-table">

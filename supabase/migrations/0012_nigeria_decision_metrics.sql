@@ -40,7 +40,10 @@ begin
     'mature_orders', (select count(*) from mature_orders),
     'maturing_orders', (select count(*) from scoped_orders) - (select count(*) from mature_orders),
     'mature_delivered', (select count(*) from mature_orders where status = 'delivered'),
+    'mature_eligible', (select count(*) from mature_orders where status <> 'out_of_stock'),
     'mature_resolved', (select count(*) from mature_orders where status in ('delivered', 'cancelled', 'rejected', 'failed_delivery')),
+    'mature_failed', (select count(*) from mature_orders where status in ('cancelled', 'rejected', 'failed_delivery')),
+    'mature_open', (select count(*) from mature_orders where status not in ('delivered', 'cancelled', 'rejected', 'failed_delivery', 'out_of_stock')),
     'mature_out_of_stock', (select count(*) from mature_orders where status = 'out_of_stock'),
     'delivered_orders', (select count(*) from delivery_period),
     'delivered_units', (select coalesce(sum(coalesce(nullif(actual_qty_delivered, 0), qty, 0)), 0) from delivery_period),
@@ -66,8 +69,10 @@ begin
     group by product
   ), product_cohort as (
     select product, count(*) as orders,
+      count(*) filter (where created_at < v_mature_before) as mature_orders,
       count(*) filter (where created_at < v_mature_before and status = 'delivered') as mature_delivered,
-      count(*) filter (where created_at < v_mature_before and status in ('delivered', 'cancelled', 'rejected', 'failed_delivery')) as mature_resolved
+      count(*) filter (where created_at < v_mature_before and status in ('delivered', 'cancelled', 'rejected', 'failed_delivery')) as mature_resolved,
+      count(*) filter (where created_at < v_mature_before and status = 'out_of_stock') as mature_out_of_stock
     from scoped_orders group by product
   ), product_delivery as (
     select product, count(*) as delivered_orders,
@@ -77,7 +82,8 @@ begin
   ), product_rows as (
     select pn.product, coalesce(p.warehouse_qty, 0) as warehouse_qty, coalesce(ast.quantity, 0) as agent_qty,
       coalesce(rv.units_28d, 0) as delivered_units_28d, coalesce(pc.orders, 0) as orders,
-      coalesce(pc.mature_delivered, 0) as mature_delivered, coalesce(pc.mature_resolved, 0) as mature_resolved,
+      coalesce(pc.mature_orders, 0) as mature_orders, coalesce(pc.mature_delivered, 0) as mature_delivered,
+      coalesce(pc.mature_resolved, 0) as mature_resolved, coalesce(pc.mature_out_of_stock, 0) as mature_out_of_stock,
       coalesce(pd.delivered_orders, 0) as delivered_orders, coalesce(pd.delivered_units, 0) as delivered_units,
       coalesce(pd.net_revenue, 0) as net_revenue
     from product_names pn
@@ -91,8 +97,8 @@ begin
     from product_rows
   )
   select coalesce(jsonb_agg(jsonb_build_object(
-    'product', product, 'orders', orders, 'mature_delivered', mature_delivered, 'mature_resolved', mature_resolved,
-    'delivery_rate', case when mature_resolved > 0 then round(mature_delivered::numeric / mature_resolved * 100, 1) else null end,
+    'product', product, 'orders', orders, 'mature_orders', mature_orders, 'mature_delivered', mature_delivered, 'mature_resolved', mature_resolved, 'mature_out_of_stock', mature_out_of_stock,
+    'delivery_rate', case when mature_orders - mature_out_of_stock > 0 then round(mature_delivered::numeric / (mature_orders - mature_out_of_stock) * 100, 1) else null end,
     'delivered_orders', delivered_orders, 'delivered_units', delivered_units,
     'average_units_per_order', case when delivered_orders > 0 then round(delivered_units::numeric / delivered_orders, 2) else null end,
     'net_revenue', net_revenue,
@@ -114,8 +120,10 @@ begin
     from scoped_orders where status = 'delivered'
   ), package_cohort as (
     select product, unit_tier, count(*) as orders,
+      count(*) filter (where created_at < v_mature_before) as mature_orders,
       count(*) filter (where created_at < v_mature_before and status = 'delivered') as mature_delivered,
-      count(*) filter (where created_at < v_mature_before and status in ('delivered', 'cancelled', 'rejected', 'failed_delivery')) as mature_resolved
+      count(*) filter (where created_at < v_mature_before and status in ('delivered', 'cancelled', 'rejected', 'failed_delivery')) as mature_resolved,
+      count(*) filter (where created_at < v_mature_before and status = 'out_of_stock') as mature_out_of_stock
     from scoped_orders group by product, unit_tier
   ), package_delivery as (
     select product, unit_tier, count(*) as delivered_orders, coalesce(sum(net_revenue), 0) as net_revenue
@@ -123,8 +131,8 @@ begin
   )
   select coalesce(jsonb_agg(jsonb_build_object(
     'product', coalesce(pc.product, pd.product), 'unit_tier', coalesce(pc.unit_tier, pd.unit_tier),
-    'orders', coalesce(pc.orders, 0), 'mature_delivered', coalesce(pc.mature_delivered, 0), 'mature_resolved', coalesce(pc.mature_resolved, 0),
-    'delivery_rate', case when coalesce(pc.mature_resolved, 0) > 0 then round(pc.mature_delivered::numeric / pc.mature_resolved * 100, 1) else null end,
+    'orders', coalesce(pc.orders, 0), 'mature_orders', coalesce(pc.mature_orders, 0), 'mature_delivered', coalesce(pc.mature_delivered, 0), 'mature_resolved', coalesce(pc.mature_resolved, 0), 'mature_out_of_stock', coalesce(pc.mature_out_of_stock, 0),
+    'delivery_rate', case when coalesce(pc.mature_orders, 0) - coalesce(pc.mature_out_of_stock, 0) > 0 then round(pc.mature_delivered::numeric / (pc.mature_orders - pc.mature_out_of_stock) * 100, 1) else null end,
     'delivered_orders', coalesce(pd.delivered_orders, 0), 'net_revenue', coalesce(pd.net_revenue, 0)
   ) order by coalesce(pc.product, pd.product), coalesce(pc.unit_tier, pd.unit_tier)), '[]'::jsonb)
   into v_packages
