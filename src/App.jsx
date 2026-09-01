@@ -193,11 +193,12 @@ function parseAuthHash() {
 
 // Role → capability map (drives UI gating; RLS enforces the same server-side)
 const CAPS = {
-  admin:      { orders: "edit", del: true, inventory: "edit", agents: "edit", analytics: true, staff: true, settings: true },
-  manager:    { orders: "edit", del: true, inventory: "edit", agents: "edit", analytics: true, staff: false, settings: true },
-  accountant: { orders: "view", del: false, inventory: "view", agents: "view", analytics: true, staff: false, settings: false },
-  caller:     { orders: "edit", del: false, inventory: "view", agents: "view", analytics: false, staff: false, settings: false },
-  viewer:     { orders: "view", del: false, inventory: "view", agents: "view", analytics: false, staff: false, settings: false },
+  admin:      { orders: "edit", del: true, inventory: "edit", products: "edit", agents: "edit", analytics: true, staff: true, settings: true },
+  manager:    { orders: "edit", del: true, inventory: "edit", products: "edit", agents: "edit", analytics: true, staff: false, settings: true },
+  accountant: { orders: "view", del: false, inventory: "view", products: "view", agents: "view", analytics: true, staff: false, settings: false },
+  caller:     { orders: "edit", del: false, inventory: "view", products: "view", agents: "view", analytics: false, staff: false, settings: false },
+  logistics:  { orders: "view", del: false, inventory: "edit", products: "view", agents: "view", analytics: false, staff: false, settings: false },
+  viewer:     { orders: "view", del: false, inventory: "view", products: "view", agents: "view", analytics: false, staff: false, settings: false },
 };
 const capsFor = role => CAPS[role] || CAPS.viewer;
 
@@ -2054,7 +2055,7 @@ export default function InfinistoresCRM() {
   const withAgents = name => cAgents.reduce((s, a) => s + (inventory.find(i => i.agent_id === a.id && i.product_name === name)?.qty || 0), 0);
   const agentName = id => agents.find(a => a.id === id)?.name || "—";
   const invHeaderBtn = {
-    products: <Btn onClick={() => setShowAddProduct(true)}><Plus size={16} />Add product</Btn>,
+    products: caps.products === "edit" ? <Btn onClick={() => setShowAddProduct(true)}><Plus size={16} />Add product</Btn> : null,
     waybills: <Btn onClick={() => setShowAddWaybill(true)}><Plus size={16} />New waybill</Btn>,
     transfers: <Btn onClick={() => setShowAddTransfer(true)}><Plus size={16} />New transfer</Btn>,
     buy: <Btn onClick={() => setShowAddPurchase(true)}><Plus size={16} />Record purchase</Btn>,
@@ -2071,14 +2072,14 @@ export default function InfinistoresCRM() {
 
       {invTab === "products" && (products.length === 0 ? <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No products yet</div></Card> :
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-          <thead><tr><th>Product</th><th className="r">In warehouse</th><th className="r">With agents</th><th className="r">Total</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
+          <thead><tr><th>Product</th><th className="r">In warehouse</th><th className="r">With agents</th><th className="r">Total</th>{caps.products === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{products.map(p => { const wa = withAgents(p.name); const wh = p.warehouse_qty || 0; return (
             <tr key={p.id}>
               <td><b style={{ fontWeight: 600 }}>{p.name}</b></td>
-              <td className="r">{caps.inventory === "edit" ? <input type="number" defaultValue={wh} key={wh} onBlur={e => { const v = Math.max(0, +e.target.value || 0); if (v !== wh) doSetWarehouseQty(p, v); }} style={{ width: "72px", textAlign: "right", padding: "5px 8px", border: `1.5px solid ${T.border}`, borderRadius: "6px", fontFamily: T.fd, fontWeight: 700 }} /> : <span className="cx-num" style={{ fontWeight: 700 }}>{wh}</span>}</td>
+              <td className="r">{caps.products === "edit" ? <input type="number" defaultValue={wh} key={wh} onBlur={e => { const v = Math.max(0, +e.target.value || 0); if (v !== wh) doSetWarehouseQty(p, v); }} style={{ width: "72px", textAlign: "right", padding: "5px 8px", border: `1.5px solid ${T.border}`, borderRadius: "6px", fontFamily: T.fd, fontWeight: 700 }} /> : <span className="cx-num" style={{ fontWeight: 700 }}>{wh}</span>}</td>
               <td className="r cx-num" style={{ color: wa ? T.accent : T.textLight }}>{wa}</td>
               <td className="r cx-num" style={{ fontWeight: 800 }}>{wh + wa}</td>
-              {caps.inventory === "edit" && <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => setEditProduct(p)}><Pencil size={13} />Edit</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteProduct(p)} style={{ color: T.danger }} aria-label={`Delete ${p.name}`}><Trash2 size={14} /></Btn></div></td>}
+              {caps.products === "edit" && <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => setEditProduct(p)}><Pencil size={13} />Edit</Btn><Btn v="ghost" sz="xs" onClick={() => doDeleteProduct(p)} style={{ color: T.danger }} aria-label={`Delete ${p.name}`}><Trash2 size={14} /></Btn></div></td>}
             </tr>
           ); })}</tbody>
         </table></div></Card>
@@ -2423,7 +2424,7 @@ export default function InfinistoresCRM() {
   );
 
   const ROLE_OPTS = [
-    { v: "admin", l: "Admin" }, { v: "manager", l: "Manager" }, { v: "accountant", l: "Accountant" }, { v: "caller", l: "Caller" }, { v: "viewer", l: "Viewer" },
+    { v: "admin", l: "Admin" }, { v: "manager", l: "Manager" }, { v: "logistics", l: "Logistics" }, { v: "accountant", l: "Accountant" }, { v: "caller", l: "Caller" }, { v: "viewer", l: "Viewer" },
   ];
   const StaffScreen = (
     <div>
