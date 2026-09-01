@@ -841,6 +841,7 @@ export default function InfinistoresCRM() {
   const [statsRange, setStatsRange] = useState("all");
   const [statsFrom, setStatsFrom] = useState("");
   const [statsTo, setStatsTo] = useState("");
+  const [expandedState, setExpandedState] = useState(null);
   const [decisionMetrics, setDecisionMetrics] = useState(null);
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [decisionError, setDecisionError] = useState("");
@@ -1230,6 +1231,41 @@ export default function InfinistoresCRM() {
     }));
     return rows.sort((a, b) => b.shortfall - a.shortfall);
   }, [demandByState, stockByState]);
+
+  const stateOperations = useMemo(() => {
+    const stateNames = new Set([
+      ...statsOrders.map(order => order.state).filter(Boolean),
+      ...cAgents.flatMap(agent => agent.states || []),
+    ]);
+    return [...stateNames].map(state => {
+      const stateOrders = statsOrders.filter(order => order.state === state);
+      const delivered = stateOrders.filter(order => order.status === "delivered");
+      const openOrders = stateOrders.filter(order => getStatus(order.status).group === "progress");
+      const agentsForState = cAgents.filter(agent => (agent.states || []).includes(state));
+      const stockByProduct = {};
+      const demandByProduct = {};
+      const agentStock = agentsForState.map(agent => {
+        const items = inventory.filter(item => item.agent_id === agent.id && Number(item.qty || 0) > 0)
+          .map(item => ({ product: item.product_name, qty: Number(item.qty || 0) }));
+        items.forEach(item => { stockByProduct[item.product] = (stockByProduct[item.product] || 0) + item.qty; });
+        return { agent, items };
+      }).filter(entry => entry.items.length > 0);
+      openOrders.forEach(order => {
+        if (!order.product) return;
+        demandByProduct[order.product] = (demandByProduct[order.product] || 0) + Number(order.qty || 0);
+      });
+      const stockUnits = Object.values(stockByProduct).reduce((total, qty) => total + qty, 0);
+      const openUnits = Object.values(demandByProduct).reduce((total, qty) => total + qty, 0);
+      const shortfallUnits = Object.entries(demandByProduct).reduce((total, [product, qty]) => total + Math.max(0, qty - (stockByProduct[product] || 0)), 0);
+      return {
+        state, orders: stateOrders.length, delivered: delivered.length,
+        deliveryRate: stateOrders.length ? Math.round(delivered.length / stateOrders.length * 100) : null,
+        openOrders: openOrders.length, openUnits, stockUnits, shortfallUnits,
+        stockByProduct, demandByProduct, agentStock, agentCount: agentsForState.length,
+      };
+    }).filter(row => row.orders > 0 || row.stockUnits > 0)
+      .sort((left, right) => right.shortfallUnits - left.shortfallUnits || right.openUnits - left.openUnits || left.stockUnits - right.stockUnits || right.orders - left.orders || left.state.localeCompare(right.state));
+  }, [statsOrders, cAgents, inventory]);
 
   // Phase 7: per-caller effectiveness (over the selected stats period)
   const callerStats = useMemo(() => callers.map(c => {
@@ -2270,12 +2306,44 @@ export default function InfinistoresCRM() {
             {[{ l: "Collected", v: stats.rev, c: "#1a7a4c", bg: T.accentLight }, { l: "Delivery fees", v: stats.fees, c: T.danger, bg: T.dangerBg }, { l: "Net remittance", v: stats.net, c: "#1d4ed8", bg: "#e8f1ff" }].map(r => <div key={r.l} style={{ padding: "14px 16px", background: r.bg, borderRadius: T.r, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: "12px", color: r.c, fontWeight: 700 }}>{r.l}</span><span className="cx-num" style={{ fontSize: "20px", fontWeight: 800, color: r.c }}>{cur}{r.v.toLocaleString()}</span></div>)}
           </div>
         </Card>
-        <Card style={{ padding: "18px", gridColumn: isMobile ? "auto" : "1/-1" }}>
-          <div className="cx-section-t" style={{ marginBottom: "12px" }}>By {country === "ghana" ? "region" : "state"}</div>
-          {states.length === 0 && <div style={{ color: T.textMuted, fontSize: "13px" }}>No data yet.</div>}
-          {states.map(st => { const so = statsOrders.filter(o => o.state === st); const d = so.filter(o => o.status === "delivered").length; const p = statsOrders.length > 0 ? so.length / statsOrders.length * 100 : 0; return (
-            <div key={st} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px" }}><span style={{ width: isMobile ? "90px" : "150px", fontSize: "11px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st}</span><div style={{ flex: 1, background: T.surfaceAlt, borderRadius: "4px", height: "14px", overflow: "hidden" }}><div style={{ width: `${p}%`, background: T.accent, height: "100%", borderRadius: "4px", minWidth: so.length > 0 ? "2px" : 0 }} /></div><span className="cx-num" style={{ width: "25px", textAlign: "right", fontWeight: 800, fontSize: "12px" }}>{so.length}</span><span style={{ width: "50px", textAlign: "right", fontSize: "10px", color: T.textMuted }}>{d} done</span></div>
-          ); })}
+        <Card style={{ overflow: "hidden", gridColumn: isMobile ? "auto" : "1/-1" }}>
+          <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">State operations</span><span className="cx-sub" style={{ marginLeft: "8px" }}>active states only · sorted by open product demand versus agent stock</span></div>
+          {stateOperations.length === 0 ? <div style={{ padding: "24px 16px", color: T.textMuted, fontSize: "13px" }}>No selected-period orders or agent stock yet.</div> : <div style={{ overflowX: "auto" }}><table className="cx-table">
+            <thead><tr><th>State</th><th className="r">Orders</th><th className="r">Delivered</th><th className="r">Delivered rate</th><th className="r">Open orders / units</th><th className="r">Stock with agents</th><th className="r">Product shortfall</th><th className="r">Agents</th><th className="r"></th></tr></thead>
+            <tbody>{stateOperations.flatMap(row => {
+              const expanded = expandedState === row.state;
+              const productNames = [...new Set([...Object.keys(row.stockByProduct), ...Object.keys(row.demandByProduct)])].sort();
+              return [
+                <tr key={`state-${row.state}`}>
+                  <td className="td-product">{row.state}</td>
+                  <td className="r cx-num">{row.orders.toLocaleString()}</td>
+                  <td className="r cx-num" style={{ fontWeight: 700, color: row.delivered ? T.accent : T.textMuted }}>{row.delivered.toLocaleString()}</td>
+                  <td className="r cx-num">{row.deliveryRate == null ? "-" : `${row.deliveryRate}%`}</td>
+                  <td className="r cx-num">{row.openOrders.toLocaleString()} / {row.openUnits.toLocaleString()}</td>
+                  <td className="r cx-num">{row.stockUnits.toLocaleString()}</td>
+                  <td className="r cx-num" style={{ color: row.shortfallUnits > 0 ? T.danger : T.accent, fontWeight: 700 }}>{row.shortfallUnits > 0 ? `${row.shortfallUnits} short` : "Covered"}</td>
+                  <td className="r cx-num">{row.agentCount.toLocaleString()}</td>
+                  <td className="r"><Btn v="secondary" sz="xs" onClick={() => setExpandedState(expanded ? null : row.state)}>{expanded ? "Hide" : "Details"}</Btn></td>
+                </tr>,
+                expanded ? <tr key={`state-detail-${row.state}`}><td colSpan={9} style={{ padding: "0 16px 16px", background: T.surfaceAlt }}>
+                  <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "12px", paddingTop: "12px" }}>
+                    <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700, marginBottom: "6px" }}>Product demand and stock</div>
+                      {productNames.length === 0 ? <div style={{ color: T.textMuted, fontSize: "12px" }}>No open demand or recorded agent stock.</div> : productNames.map(product => {
+                        const demand = row.demandByProduct[product] || 0;
+                        const stock = row.stockByProduct[product] || 0;
+                        const gap = Math.max(0, demand - stock);
+                        return <div key={product} style={{ display: "flex", justifyContent: "space-between", gap: "10px", padding: "5px 0", borderBottom: `1px solid ${T.borderLight}`, fontSize: "12px" }}><span style={{ fontWeight: 600 }}>{product}</span><span className="cx-num">Open: {demand} · With agents: {stock}{gap > 0 && <span style={{ color: T.danger, fontWeight: 700 }}> · {gap} short</span>}</span></div>;
+                      })}
+                    </div>
+                    <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700, marginBottom: "6px" }}>Agents holding recorded stock</div>
+                      {row.agentStock.length === 0 ? <div style={{ color: T.textMuted, fontSize: "12px" }}>No agent serving this state has recorded stock.</div> : row.agentStock.map(({ agent, items }) => <div key={agent.id} style={{ padding: "7px 0", borderBottom: `1px solid ${T.borderLight}`, fontSize: "12px" }}><b>{agent.name}</b><span style={{ color: T.textMuted }}> · {items.map(item => `${item.product}: ${item.qty}`).join(" · ")}</span></div>)}
+                    </div>
+                  </div>
+                  <div style={{ marginTop: "10px", fontSize: "11px", color: T.textMuted }}>“Stock with agents” is stock held by agents who serve {row.state}; it is not a claim that all units are physically located in that state.</div>
+                </td></tr> : null,
+              ];
+            })}</tbody>
+          </table></div>}
         </Card>
         <Card style={{ padding: "18px", gridColumn: isMobile ? "auto" : "1/-1" }}>
           <div className="cx-section-t" style={{ marginBottom: "12px" }}>By product</div>
