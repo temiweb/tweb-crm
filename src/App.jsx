@@ -570,6 +570,7 @@ const CSS = `
 .cx-state-stock-pills{display:flex;gap:5px;flex-wrap:wrap}
 .cx-state-stock-pill{font-size:10px;color:var(--ink-2);background:var(--brand-50);border-radius:5px;padding:4px 6px}.cx-state-stock-pill b{color:var(--brand-700);margin-right:3px}
 .cx-state-detail-note{font-size:11px;color:var(--muted);line-height:1.5;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line-2)}
+.cx-sort-header{display:inline-flex;align-items:center;gap:4px;border:0;background:none;padding:0;color:inherit;font:inherit;font-weight:inherit;letter-spacing:inherit;text-transform:inherit;cursor:pointer}.cx-sort-header:hover{color:var(--ink)}.cx-sort-header .arr{font-size:12px;line-height:1;color:var(--muted)}.cx-sort-header.on .arr{color:var(--brand-700)}
 @media(max-width:900px){.cx-insight-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cx-card-head{padding:15px 14px 10px}.cx-insight-body{padding:0 14px 14px}.cx-state-detail{padding:14px}.cx-state-detail-grid{grid-template-columns:1fr;gap:14px}}
 
 /* ---- tabs / filters ---- */
@@ -880,6 +881,7 @@ export default function InfinistoresCRM() {
   const [statsFrom, setStatsFrom] = useState("");
   const [statsTo, setStatsTo] = useState("");
   const [expandedState, setExpandedState] = useState(null);
+  const [stateSort, setStateSort] = useState({ key: "orders", direction: "desc" });
   const [showPackageMix, setShowPackageMix] = useState(false);
   const [decisionMetrics, setDecisionMetrics] = useState(null);
   const [decisionLoading, setDecisionLoading] = useState(false);
@@ -1310,8 +1312,13 @@ export default function InfinistoresCRM() {
         stockByProduct, demandByProduct, deliveredByProduct, agentStock, agentCount: agentsForState.length,
       };
     }).filter(row => row.orders > 0 || row.stockUnits > 0)
-      .sort((left, right) => right.shortfallUnits - left.shortfallUnits || right.openUnits - left.openUnits || left.stockUnits - right.stockUnits || right.orders - left.orders || left.state.localeCompare(right.state));
-  }, [statsOrders, cAgents, inventory]);
+      .sort((left, right) => {
+        const leftValue = left[stateSort.key] ?? 0;
+        const rightValue = right[stateSort.key] ?? 0;
+        const comparison = stateSort.key === "state" ? String(leftValue).localeCompare(String(rightValue)) : leftValue - rightValue;
+        return comparison * (stateSort.direction === "asc" ? 1 : -1) || left.state.localeCompare(right.state);
+      });
+  }, [statsOrders, cAgents, inventory, stateSort]);
 
   // Phase 7: per-caller effectiveness (over the selected stats period)
   const callerStats = useMemo(() => callers.map(c => {
@@ -2174,6 +2181,12 @@ export default function InfinistoresCRM() {
   const averageUnitsPerDeliveredOrder = Number(decisionOverview.delivered_orders || 0) > 0
     ? Number(decisionOverview.delivered_units || 0) / Number(decisionOverview.delivered_orders || 0) : null;
   const decisionMoney = value => `${cur}${Math.round(Number(value || 0)).toLocaleString()}`;
+  const toggleStateSort = key => setStateSort(current => ({ key, direction: current.key === key && current.direction === "desc" ? "asc" : "desc" }));
+  const StateSortHeader = ({ label, sortKey, right = false }) => {
+    const active = stateSort.key === sortKey;
+    const arrow = active ? stateSort.direction === "asc" ? "↑" : "↓" : "↕";
+    return <th className={right ? "r" : ""}><button className={`cx-sort-header${active ? " on" : ""}`} onClick={() => toggleStateSort(sortKey)} title={`Sort by ${label}`} aria-label={`Sort by ${label}`}><span>{label}</span><span className="arr" aria-hidden="true">{arrow}</span></button></th>;
+  };
   const AnalyticsScreen = (
     <div className="cx-analytics">
       <div className="cx-head">
@@ -2361,7 +2374,7 @@ export default function InfinistoresCRM() {
         <Card style={{ overflow: "hidden", gridColumn: isMobile ? "auto" : "1/-1" }}>
           <div className="cx-card-head"><div><div className="cx-section-t">State operations</div><div className="cx-sub">Active states only. Stock is recorded against agents serving each state.</div></div></div>
           {stateOperations.length === 0 ? <div style={{ padding: "24px 16px", color: T.textMuted, fontSize: "13px" }}>No selected-period orders or agent stock yet.</div> : <div style={{ overflowX: "auto" }}><table className="cx-table">
-            <thead><tr><th>State</th><th className="r">Orders</th><th className="r">Delivered</th><th className="r">Delivery rate</th><th className="r">Stock with agents</th><th className="r">Agents</th><th className="r"></th></tr></thead>
+            <thead><tr><StateSortHeader label="State" sortKey="state" /><StateSortHeader label="Orders" sortKey="orders" right /><StateSortHeader label="Delivered" sortKey="delivered" right /><StateSortHeader label="Delivery rate" sortKey="deliveryRate" right /><StateSortHeader label="Stock with agents" sortKey="stockUnits" right /><StateSortHeader label="Agents" sortKey="agentCount" right /><th className="r"></th></tr></thead>
             <tbody>{stateOperations.flatMap(row => {
               const expanded = expandedState === row.state;
               const productNames = [...new Set([...Object.keys(row.stockByProduct), ...Object.keys(row.deliveredByProduct)])].sort();
