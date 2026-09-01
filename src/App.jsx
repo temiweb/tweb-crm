@@ -561,7 +561,9 @@ const CSS = `
 .cx-state-product:last-child{border-bottom:none}
 .cx-state-product-name{font-weight:700;color:var(--ink)}
 .cx-state-product-holders{font-size:11px;color:var(--muted);margin-top:3px}
-.cx-state-product-qty{font-family:'Montserrat';font-size:17px;font-weight:800;color:var(--brand-700);white-space:nowrap}
+.cx-state-product-metrics{text-align:right;white-space:nowrap}
+.cx-state-product-qty{font-family:'Montserrat';font-size:17px;font-weight:800;color:var(--brand-700)}
+.cx-state-product-delivered{font-size:10px;color:var(--muted);margin-top:3px}.cx-state-product-delivered b{color:var(--ink-2)}
 .cx-state-agent-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
 .cx-state-agent{padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
 .cx-state-agent-name{font-size:12px;font-weight:700;margin-bottom:8px}
@@ -1281,6 +1283,7 @@ export default function InfinistoresCRM() {
       const agentsForState = cAgents.filter(agent => (agent.states || []).includes(state));
       const stockByProduct = {};
       const demandByProduct = {};
+      const deliveredByProduct = {};
       const agentStock = agentsForState.map(agent => {
         const items = inventory.filter(item => item.agent_id === agent.id && Number(item.qty || 0) > 0)
           .map(item => ({ product: item.product_name, qty: Number(item.qty || 0) }));
@@ -1291,6 +1294,12 @@ export default function InfinistoresCRM() {
         if (!order.product) return;
         demandByProduct[order.product] = (demandByProduct[order.product] || 0) + Number(order.qty || 0);
       });
+      delivered.forEach(order => {
+        if (!order.product) return;
+        const product = deliveredByProduct[order.product] = deliveredByProduct[order.product] || { orders: 0, units: 0 };
+        product.orders += 1;
+        product.units += Number(order.actual_qty_delivered || order.qty || 0);
+      });
       const stockUnits = Object.values(stockByProduct).reduce((total, qty) => total + qty, 0);
       const openUnits = Object.values(demandByProduct).reduce((total, qty) => total + qty, 0);
       const shortfallUnits = Object.entries(demandByProduct).reduce((total, [product, qty]) => total + Math.max(0, qty - (stockByProduct[product] || 0)), 0);
@@ -1298,7 +1307,7 @@ export default function InfinistoresCRM() {
         state, orders: stateOrders.length, delivered: delivered.length,
         deliveryRate: stateOrders.length ? Math.round(delivered.length / stateOrders.length * 100) : null,
         openOrders: openOrders.length, openUnits, stockUnits, shortfallUnits,
-        stockByProduct, demandByProduct, agentStock, agentCount: agentsForState.length,
+        stockByProduct, demandByProduct, deliveredByProduct, agentStock, agentCount: agentsForState.length,
       };
     }).filter(row => row.orders > 0 || row.stockUnits > 0)
       .sort((left, right) => right.shortfallUnits - left.shortfallUnits || right.openUnits - left.openUnits || left.stockUnits - right.stockUnits || right.orders - left.orders || left.state.localeCompare(right.state));
@@ -2355,7 +2364,7 @@ export default function InfinistoresCRM() {
             <thead><tr><th>State</th><th className="r">Orders</th><th className="r">Delivered</th><th className="r">Delivery rate</th><th className="r">Stock with agents</th><th className="r">Agents</th><th className="r"></th></tr></thead>
             <tbody>{stateOperations.flatMap(row => {
               const expanded = expandedState === row.state;
-              const productNames = Object.keys(row.stockByProduct).sort();
+              const productNames = [...new Set([...Object.keys(row.stockByProduct), ...Object.keys(row.deliveredByProduct)])].sort();
               return [
                 <tr key={`state-${row.state}`}>
                   <td className="td-product">{row.state}</td>
@@ -2368,10 +2377,11 @@ export default function InfinistoresCRM() {
                 </tr>,
                 expanded ? <tr key={`state-detail-${row.state}`}><td colSpan={7} className="cx-state-detail">
                   <div className="cx-state-detail-grid">
-                    <div><div className="cx-state-detail-title">Stock by product</div>
-                      {productNames.length === 0 ? <div style={{ color: T.textMuted, fontSize: "12px" }}>No stock is recorded with agents serving this state.</div> : productNames.map(product => {
+                    <div><div className="cx-state-detail-title">Product stock and deliveries</div>
+                      {productNames.length === 0 ? <div style={{ color: T.textMuted, fontSize: "12px" }}>No product stock or deliveries in the selected period.</div> : productNames.map(product => {
                         const holders = row.agentStock.filter(({ items }) => items.some(item => item.product === product)).map(({ agent }) => agent.name).join(", ");
-                        return <div key={product} className="cx-state-product"><div><div className="cx-state-product-name">{product}</div><div className="cx-state-product-holders">Held by {holders}</div></div><div className="cx-state-product-qty">{row.stockByProduct[product]} units</div></div>;
+                        const delivery = row.deliveredByProduct[product] || { orders: 0, units: 0 };
+                        return <div key={product} className="cx-state-product"><div><div className="cx-state-product-name">{product}</div><div className="cx-state-product-holders">{holders ? `Held by ${holders}` : "No recorded agent stock"}</div></div><div className="cx-state-product-metrics"><div className="cx-state-product-qty">{row.stockByProduct[product] || 0} stock</div><div className="cx-state-product-delivered"><b>{delivery.orders} orders / {delivery.units} units</b> delivered</div></div></div>;
                       })}
                     </div>
                     <div><div className="cx-state-detail-title">Agent holdings</div>
