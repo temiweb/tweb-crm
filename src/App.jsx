@@ -534,6 +534,28 @@ const CSS = `
 .cx-table .r{text-align:right} .cx-table th.r{text-align:right}
 .cx-cust b{font-weight:600} .cx-cust span{display:block;font-size:12px;color:var(--muted)}
 
+.cx-analytics{display:grid;gap:18px}
+.cx-analytics .cx-card{margin-bottom:0!important}
+.cx-analytics-label{display:flex;align-items:center;gap:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:2px 2px 0}
+.cx-analytics-label::after{content:"";height:1px;background:var(--line);flex:1}
+.cx-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:18px 18px 12px;flex-wrap:wrap}
+.cx-card-head .cx-sub{font-size:12px;max-width:720px}
+.cx-insight-card{overflow:hidden}
+.cx-insight-body{padding:0 18px 18px}
+.cx-insight-kpis{grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.cx-insight-kpi{padding:13px 14px;background:var(--bg);border:1px solid var(--line-2);border-radius:var(--radius-sm);min-width:0}
+.cx-insight-kpi .label{font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cx-insight-kpi .value{font-family:'Montserrat';font-size:21px;font-weight:800;margin:4px 0;line-height:1.1}
+.cx-insight-kpi .detail{font-size:10.5px;color:var(--muted);line-height:1.35;min-height:28px}
+.cx-outcome-chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}
+.cx-outcome-chip{padding:5px 8px;border-radius:6px;font-size:11px;font-weight:700}
+.cx-insight-note{font-size:11px;color:var(--muted);line-height:1.55;padding:10px 12px;background:var(--bg);border-radius:8px;margin-bottom:16px}
+.cx-insight-section{border-top:1px solid var(--line);padding-top:15px;margin-top:15px}
+.cx-insight-section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:9px}
+.cx-table-dense{font-size:12px}.cx-table-dense th{padding:9px 10px}.cx-table-dense td{padding:10px}
+.cx-table-dense td:first-child{font-weight:600}
+@media(max-width:900px){.cx-insight-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cx-card-head{padding:15px 14px 10px}.cx-insight-body{padding:0 14px 14px}}
+
 /* ---- tabs / filters ---- */
 .cx-tabs{display:flex;gap:4px;background:var(--bg);padding:4px;border-radius:11px;width:fit-content;margin-bottom:14px;flex-wrap:wrap}
 .cx-tab{padding:7px 14px;border-radius:8px;font-size:13.5px;font-weight:600;color:var(--muted);background:none;border:none}
@@ -842,6 +864,7 @@ export default function InfinistoresCRM() {
   const [statsFrom, setStatsFrom] = useState("");
   const [statsTo, setStatsTo] = useState("");
   const [expandedState, setExpandedState] = useState(null);
+  const [showPackageMix, setShowPackageMix] = useState(false);
   const [decisionMetrics, setDecisionMetrics] = useState(null);
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [decisionError, setDecisionError] = useState("");
@@ -2129,44 +2152,46 @@ export default function InfinistoresCRM() {
     ? Number(decisionOverview.delivered_units || 0) / Number(decisionOverview.delivered_orders || 0) : null;
   const decisionMoney = value => `${cur}${Math.round(Number(value || 0)).toLocaleString()}`;
   const AnalyticsScreen = (
-    <div>
+    <div className="cx-analytics">
       <div className="cx-head">
         <div><h1 className="cx-h1">Analytics</h1><div className="cx-sub">{country === "ghana" ? "Ghana" : "Nigeria"} · order-to-doorstep performance</div></div>
       </div>
       {statsStrip}
 
-      {country === "nigeria" && <Card style={{ padding: "18px", marginBottom: "14px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "14px", flexWrap: "wrap" }}>
+      <div className="cx-analytics-label">Decision view</div>
+      {country === "nigeria" && <Card className="cx-insight-card">
+        <div className="cx-card-head">
           <div><div className="cx-section-t">Decision overview</div><div className="cx-sub">Nigeria only · selected-period results use the order-received date</div></div>
           <Btn v="secondary" sz="xs" onClick={() => setDecisionRefreshKey(value => value + 1)} disabled={decisionLoading}><RefreshCw size={13} />{decisionLoading ? "Loading" : "Refresh"}</Btn>
         </div>
-        {decisionError ? <div style={{ padding: "12px 14px", borderRadius: T.r, background: T.warningBg, color: T.warning, fontSize: "12px", fontWeight: 600 }}>Decision metrics are unavailable: {decisionError}</div> : decisionLoading && !decisionMetrics ? <div style={{ color: T.textMuted, fontSize: "13px" }}>Loading a compact decision summary…</div> : decisionMetrics && <>
-          <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: "10px", marginBottom: "14px" }}>
+        {decisionError ? <div style={{ margin: "0 18px 18px", padding: "12px 14px", borderRadius: T.r, background: T.warningBg, color: T.warning, fontSize: "12px", fontWeight: 600 }}>Decision metrics are unavailable: {decisionError}</div> : decisionLoading && !decisionMetrics ? <div style={{ padding: "0 18px 18px", color: T.textMuted, fontSize: "13px" }}>Loading a compact decision summary…</div> : decisionMetrics && <div className="cx-insight-body">
+          <div className="cx-grid cx-insight-kpis">
             {[
               { l: "7-day cohort delivery rate", v: matureDeliveryRate == null ? "-" : `${matureDeliveryRate}%`, d: matureEligible ? `${decisionOverview.mature_delivered} of ${matureEligible} eligible orders` : "No eligible mature orders" },
               { l: "Delivered units", v: Number(decisionOverview.delivered_units || 0).toLocaleString(), d: averageUnitsPerDeliveredOrder == null ? "No delivered orders" : `${averageUnitsPerDeliveredOrder.toFixed(1)} units per delivered order` },
               { l: "Delivered sales", v: decisionMoney(decisionOverview.net_revenue), d: `${Number(decisionOverview.delivered_orders || 0).toLocaleString()} orders received this period, after delivery fees` },
               { l: "Tagged ad spend", v: decisionMoney(decisionFinance.tagged_ad_spend), d: Number(decisionFinance.unallocated_ad_spend || 0) > 0 ? `${decisionMoney(decisionFinance.unallocated_ad_spend)} still unallocated` : "All recorded spend is tagged" },
               { l: "Cash received", v: decisionMoney(decisionFinance.cash_received), d: "Cash-flow entries recorded this period" },
-            ].map(card => <div key={card.l} style={{ padding: "12px", background: T.surfaceAlt, borderRadius: T.r }}>
-              <div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>{card.l}</div>
-              <div className="cx-num" style={{ fontSize: "20px", fontWeight: 800, margin: "3px 0" }}>{card.v}</div>
-              <div style={{ fontSize: "10px", color: T.textMuted }}>{card.d}</div>
+            ].map(card => <div key={card.l} className="cx-insight-kpi">
+              <div className="label">{card.l}</div>
+              <div className="value">{card.v}</div>
+              <div className="detail">{card.d}</div>
             </div>)}
           </div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+          <div className="cx-outcome-chips">
             {[
               { l: "Delivered", v: decisionOverview.mature_delivered, c: T.accent, bg: T.accentLight },
               { l: "Still open", v: decisionOverview.mature_open, c: T.warning, bg: T.warningBg },
               { l: "Failed / cancelled", v: decisionOverview.mature_failed, c: T.danger, bg: T.dangerBg },
               { l: "Out of stock (excluded)", v: decisionOverview.mature_out_of_stock, c: T.textMuted, bg: T.surfaceAlt },
-            ].map(outcome => <span key={outcome.l} style={{ padding: "4px 8px", borderRadius: "6px", color: outcome.c, background: outcome.bg, fontSize: "11px", fontWeight: 700 }}>{outcome.l}: {Number(outcome.v || 0).toLocaleString()}</span>)}
+            ].map(outcome => <span key={outcome.l} className="cx-outcome-chip" style={{ color: outcome.c, background: outcome.bg }}>{outcome.l}: {Number(outcome.v || 0).toLocaleString()}</span>)}
           </div>
-          <div style={{ fontSize: "11px", color: T.textMuted, marginBottom: "10px" }}>
+          <div className="cx-insight-note">
             “7-day cohort” includes every order received at least {decisionMetrics.maturity_days} days ago. The headline rate is delivered ÷ all eligible cohort orders, so still-open orders remain in the denominator; only out-of-stock orders are excluded. {resolvedDeliveryRate != null ? ` Among resolved orders only, the rate is ${resolvedDeliveryRate}% (${decisionOverview.mature_delivered} of ${matureResolved}).` : ""} {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} Stock cover still uses units actually delivered in the last 28 days.
           </div>
-          <div className="cx-section-t" style={{ margin: "16px 0 8px" }}>Product performance</div>
-          <div style={{ overflowX: "auto" }}><table className="cx-table">
+          <div className="cx-insight-section">
+          <div className="cx-insight-section-head"><div className="cx-section-t">Product performance</div><div className="cx-sub">Revenue, delivery, spend and stock cover</div></div>
+          <div style={{ overflowX: "auto" }}><table className="cx-table cx-table-dense">
             <thead><tr><th>Product</th><th className="r">Orders</th><th className="r">7-day cohort rate</th><th className="r">Delivered orders / units</th><th className="r">Delivered sales</th><th className="r">Ad spend</th><th className="r">Ad spend / delivery</th><th className="r">Warehouse</th><th className="r">With agents</th><th className="r">Cover</th></tr></thead>
             <tbody>{decisionProducts.map(product => {
               const cover = product.weeks_cover == null ? "-" : `${product.weeks_cover} wk`;
@@ -2177,17 +2202,20 @@ export default function InfinistoresCRM() {
               return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} orders / {Number(product.delivered_units || 0).toLocaleString()} units</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td><td className="r cx-num">{Number(product.warehouse_qty || 0).toLocaleString()}</td><td className="r cx-num">{Number(product.agent_qty || 0).toLocaleString()}</td><td className="r cx-num" style={{ fontWeight: 800, color }}>{cover}</td></tr>;
             })}</tbody>
           </table></div>
-          <div className="cx-section-t" style={{ margin: "18px 0 8px" }}>Package mix</div>
-          <div style={{ overflowX: "auto" }}><table className="cx-table">
+          </div>
+          <div className="cx-insight-section">
+          <div className="cx-insight-section-head"><div><div className="cx-section-t">Package mix</div><div className="cx-sub">Saved quantities, not package labels</div></div><Btn v="secondary" sz="xs" onClick={() => setShowPackageMix(value => !value)}>{showPackageMix ? "Hide" : "View details"}</Btn></div>
+          {showPackageMix && <div style={{ overflowX: "auto" }}><table className="cx-table cx-table-dense">
             <thead><tr><th>Product</th><th>Tier</th><th className="r">Orders</th><th className="r">7-day cohort rate</th><th className="r">Delivered orders</th><th className="r">Delivered sales</th></tr></thead>
             <tbody>{decisionPackages.map(item => <tr key={`${item.product}-${item.unit_tier}`}><td className="td-product">{item.product}</td><td>{item.unit_tier} unit{Number(item.unit_tier) === 1 ? "" : "s"}</td><td className="r cx-num">{Number(item.orders || 0).toLocaleString()}</td><td className="r cx-num">{item.delivery_rate == null ? "-" : `${item.delivery_rate}%`}</td><td className="r cx-num">{Number(item.delivered_orders || 0).toLocaleString()}</td><td className="r cx-num">{decisionMoney(item.net_revenue)}</td></tr>)}</tbody>
-          </table></div>
-          <div style={{ marginTop: "8px", fontSize: "11px", color: T.textMuted }}>Package tiers use the saved order quantity, not the package label, so bundles such as “buy 2, get 1 free” are counted correctly.</div>
+          </table></div>}
+          </div>
           {Number(decisionOverview.missing_cogs_orders || 0) > 0 && <div style={{ marginTop: "10px", fontSize: "11px", color: T.warning }}>COGS is not shown yet: {decisionOverview.missing_cogs_orders} delivered order{Number(decisionOverview.missing_cogs_orders) === 1 ? " is" : "s are"} missing a cost snapshot.</div>}
-        </>}
+        </div>}
       </Card>}
 
-      <Card style={{ padding: "18px", marginBottom: "14px" }}>
+      <div className="cx-analytics-label">Period performance</div>
+      <Card style={{ padding: "18px" }}>
         <div className="cx-section-t" style={{ marginBottom: "12px" }}>This month vs last month <span className="cx-sub" style={{ marginLeft: "6px" }}>· to the same point in the month</span></div>
         <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: "10px" }}>
           {[
@@ -2208,7 +2236,7 @@ export default function InfinistoresCRM() {
         </div>
       </Card>
 
-      <Card style={{ padding: "18px", marginBottom: "14px" }}>
+      <Card style={{ padding: "18px" }}>
         <div className="cx-section-t" style={{ marginBottom: "14px" }}>Trend — last {monthlyTrend.length} month{monthlyTrend.length !== 1 ? "s" : ""}</div>
         {monthlyTrend.length === 0 ? <div style={{ color: T.textMuted, fontSize: "13px" }}>No data yet.</div> : (() => {
           const maxOrders = Math.max(...monthlyTrend.map(m => m.orders), 1);
@@ -2226,7 +2254,8 @@ export default function InfinistoresCRM() {
         <div style={{ display: "flex", gap: "14px", marginTop: "12px", fontSize: "10px", color: T.textMuted, flexWrap: "wrap" }}><span><i style={{ display: "inline-block", width: "9px", height: "9px", background: T.accent, borderRadius: "2px", marginRight: "4px" }} />Delivered</span><span><i style={{ display: "inline-block", width: "9px", height: "9px", background: T.surfaceAlt, borderRadius: "2px", marginRight: "4px" }} />Total orders</span><span>Top figure = revenue collected</span></div>
       </Card>
 
-      {FEATURE_CALLER && callers.length > 0 && <Card style={{ overflow: "hidden", marginBottom: "14px" }}>
+      <div className="cx-analytics-label">People</div>
+      {FEATURE_CALLER && callers.length > 0 && <Card style={{ overflow: "hidden" }}>
         <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Caller effectiveness</span><span className="cx-sub" style={{ marginLeft: "8px" }}>of the orders given to each caller, where did they land</span></div>
         <div style={{ overflowX: "auto" }}><table className="cx-table">
           <thead><tr><th>Caller</th><th className="r">Assigned</th><th className="r">Delivered</th><th>Delivery rate</th><th className="r">Lost on call</th><th className="r">Lost at delivery</th><th className="r">In progress</th></tr></thead>
@@ -2248,7 +2277,7 @@ export default function InfinistoresCRM() {
         <div style={{ padding: "8px 16px", fontSize: "11px", color: T.textMuted, borderTop: `1px solid ${T.borderLight}` }}>Lost on call = phone-skill signal (caller-influenced). Lost at delivery = more about the agent/area.</div>
       </Card>}
 
-      {cAgents.length > 0 && <Card style={{ overflow: "hidden", marginBottom: "14px" }}>
+      {cAgents.length > 0 && <Card style={{ overflow: "hidden" }}>
         <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Agent leaderboard</span><span className="cx-sub" style={{ marginLeft: "8px" }}>for the selected period · idle = holding stock, delivered nothing</span></div>
         <div style={{ overflowX: "auto" }}><table className="cx-table">
           <thead><tr><th>Agent</th><th className="r">Assigned</th><th className="r">Delivered</th><th>Delivery rate</th><th className="r">Stock</th><th className="r">Revenue</th></tr></thead>
@@ -2267,8 +2296,8 @@ export default function InfinistoresCRM() {
         </table></div>
       </Card>}
 
-      {/* signature delivery funnel */}
-      <Card className="cx-funnel" style={{ marginBottom: "14px" }}>
+      <div className="cx-analytics-label">Conversion and operations</div>
+      <Card className="cx-funnel">
         <div className="lead">
           <span className="big cx-num">{funnel.placed > 0 ? Math.round(funnel.delivered / funnel.placed * 100) : 0}%</span>
           <div><div className="cx-section-t">Order-to-doorstep</div>
@@ -2344,22 +2373,6 @@ export default function InfinistoresCRM() {
               ];
             })}</tbody>
           </table></div>}
-        </Card>
-        <Card style={{ padding: "18px", gridColumn: isMobile ? "auto" : "1/-1" }}>
-          <div className="cx-section-t" style={{ marginBottom: "12px" }}>By product</div>
-          {(() => {
-            const prods = [...new Set(statsOrders.map(o => o.product).filter(Boolean))];
-            if (prods.length === 0) return <div style={{ color: T.textMuted, fontSize: "13px" }}>No data yet.</div>;
-            const rows = prods.map(p => {
-              const po = statsOrders.filter(o => o.product === p);
-              const del = po.filter(o => o.status === "delivered");
-              return { p, orders: po.length, delivered: del.length, rate: po.length ? Math.round(del.length / po.length * 100) : 0, units: del.reduce((s, o) => s + (o.actual_qty_delivered || o.qty || 0), 0), rev: del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0) };
-            }).sort((a, b) => b.rev - a.rev);
-            const maxRev = Math.max(...rows.map(r => r.rev), 1);
-            return rows.map(r => (
-              <div key={r.p} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}><span style={{ width: isMobile ? "90px" : "160px", fontSize: "11px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.p}</span><div style={{ flex: 1, background: T.surfaceAlt, borderRadius: "4px", height: "14px", overflow: "hidden" }}><div style={{ width: `${r.rev / maxRev * 100}%`, background: T.accent, height: "100%", borderRadius: "4px", minWidth: r.rev > 0 ? "2px" : 0 }} /></div><span className="cx-num" style={{ width: "90px", textAlign: "right", fontSize: "11px", fontWeight: 700 }}>{cur}{r.rev.toLocaleString()}</span><span style={{ width: isMobile ? "58px" : "110px", textAlign: "right", fontSize: "10px", color: T.textMuted }}>{r.delivered}/{r.orders} · {r.rate}%{!isMobile && ` · ${r.units}u`}</span></div>
-            ));
-          })()}
         </Card>
       </div>
     </div>
