@@ -2846,6 +2846,7 @@ function StaffForm({ onSubmit }) {
     <select value={role} onChange={e => setRole(e.target.value)} style={fSel}>
       <option value="admin">Admin — full access</option>
       <option value="manager">Manager — everything except staff</option>
+      <option value="logistics">Logistics — inventory operations</option>
       <option value="accountant">Accountant — view + analytics</option>
       <option value="caller">Caller — confirm orders</option>
       <option value="viewer">Viewer — read only</option>
