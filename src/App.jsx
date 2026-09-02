@@ -798,7 +798,7 @@ function LoginScreen({ onLogin }) {
 //    these inside the main component made React remount them on every state
 //    change — e.g. the custom date inputs lost focus while typing) ──
 
-function PeriodFilter({ range, setRange, from, setFrom, to, setTo }) {
+function PeriodFilter({ range, setRange, from, setFrom, to, setTo, product, setProduct, products = [] }) {
   return (
     <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", marginBottom: "12px" }}>
       <span className="cx-eyebrow" style={{ marginRight: "2px" }}>Period</span>
@@ -810,6 +810,7 @@ function PeriodFilter({ range, setRange, from, setFrom, to, setTo }) {
         <span style={{ fontSize: "12px", color: T.textMuted }}>→</span>
         <input type="date" value={to} onChange={e => setTo(e.target.value)} style={{ padding: "5px 10px", borderRadius: T.rs, fontSize: "12px", border: `1.5px solid ${T.border}`, background: T.surface, fontFamily: T.f }} />
       </>}
+      {setProduct && <span className={`cx-sel ${product !== "all" ? "act" : ""}`}><select value={product} onChange={e => setProduct(e.target.value)} aria-label="Focus product"><option value="all">All products</option>{products.map(item => <option key={item} value={item}>{item}</option>)}</select></span>}
     </div>
   );
 }
@@ -881,6 +882,7 @@ export default function InfinistoresCRM() {
   const [statsRange, setStatsRange] = useState("all");
   const [statsFrom, setStatsFrom] = useState("");
   const [statsTo, setStatsTo] = useState("");
+  const [focusProduct, setFocusProduct] = useState("all");
   const [expandedState, setExpandedState] = useState(null);
   const [stateSort, setStateSort] = useState({ key: "orders", direction: "desc" });
   const [showPackageMix, setShowPackageMix] = useState(false);
@@ -1121,12 +1123,12 @@ export default function InfinistoresCRM() {
     let cancelled = false;
     setDecisionLoading(true);
     setDecisionError("");
-    sb.rpc("get_nigeria_decision_metrics", { p_from: decisionFrom, p_to: decisionTo, p_maturity_days: 7 })
+    sb.rpc("get_nigeria_decision_metrics", { p_from: decisionFrom, p_to: decisionTo, p_maturity_days: 7, p_product: focusProduct === "all" ? null : focusProduct })
       .then(data => { if (!cancelled) setDecisionMetrics(data); })
       .catch(error => { if (!cancelled) setDecisionError(error.message || "Could not load decision metrics."); })
       .finally(() => { if (!cancelled) setDecisionLoading(false); });
     return () => { cancelled = true; };
-  }, [authed, caps.analytics, tab, country, decisionFrom, decisionTo, decisionRefreshKey]);
+  }, [authed, caps.analytics, tab, country, decisionFrom, decisionTo, focusProduct, decisionRefreshKey]);
 
   const filtered = useMemo(() => cOrders.filter(o => {
     if (statusF !== "all" && o.status !== statusF) return false;
@@ -1166,14 +1168,14 @@ export default function InfinistoresCRM() {
 
   const statsOrders = useMemo(() => {
     const { from, to } = periodRange;
-    if (!from && !to) return cOrders;
     return cOrders.filter(o => {
       const d = new Date(o.created_at);
       if (from && d < from) return false;
       if (to && d > to) return false;
+      if (focusProduct !== "all" && o.product !== focusProduct) return false;
       return true;
     });
-  }, [cOrders, periodRange]);
+  }, [cOrders, periodRange, focusProduct]);
 
   const stats = useMemo(() => {
     const del = statsOrders.filter(o => o.status === "delivered");
@@ -1209,13 +1211,13 @@ export default function InfinistoresCRM() {
       m[a.id] = {
         total: ao.length, delivered: del.length, inTransit, cancelled, failed,
         rate: ao.length > 0 ? ((del.length / ao.length) * 100).toFixed(0) : "-",
-        stock: inventory.filter(i => i.agent_id === a.id).reduce((s, i) => s + i.qty, 0),
+        stock: inventory.filter(i => i.agent_id === a.id && (focusProduct === "all" || i.product_name === focusProduct)).reduce((s, i) => s + i.qty, 0),
         fees: ao.reduce((s, o) => s + (o.delivery_fee || 0), 0),
         revenue: del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0),
       };
     });
     return m;
-  }, [cAgents, statsOrders, inventory]);
+  }, [cAgents, statsOrders, inventory, focusProduct]);
 
   const agentTotals = useMemo(() => {
     const vals = Object.values(agentSt);
@@ -1238,20 +1240,21 @@ export default function InfinistoresCRM() {
     cAgents.forEach(a => {
       const sts = a.states || [];
       if (!sts.length) return;
-      inventory.filter(i => i.agent_id === a.id).forEach(i => sts.forEach(st => { if (m[st]) m[st].stock[i.product_name] = (m[st].stock[i.product_name] || 0) + (i.qty || 0); }));
+      inventory.filter(i => i.agent_id === a.id && (focusProduct === "all" || i.product_name === focusProduct)).forEach(i => sts.forEach(st => { if (m[st]) m[st].stock[i.product_name] = (m[st].stock[i.product_name] || 0) + (i.qty || 0); }));
     });
     return m;
-  }, [cAgents, inventory]);
+  }, [cAgents, inventory, focusProduct]);
 
   // Demand = units on open orders ("in progress" group) per state × product.
   const demandByState = useMemo(() => {
     const m = {};
     cOrders.forEach(o => {
+      if (focusProduct !== "all" && o.product !== focusProduct) return;
       if (getStatus(o.status).group !== "progress" || !o.state || !o.product) return;
       (m[o.state] = m[o.state] || {})[o.product] = (m[o.state][o.product] || 0) + (o.qty || 0);
     });
     return m;
-  }, [cOrders]);
+  }, [cOrders, focusProduct]);
 
   const stockSignal = (o) => {
     const cover = stockByState[o.state];
@@ -1288,7 +1291,7 @@ export default function InfinistoresCRM() {
       const demandByProduct = {};
       const deliveredByProduct = {};
       const agentStock = agentsForState.map(agent => {
-        const items = inventory.filter(item => item.agent_id === agent.id && Number(item.qty || 0) > 0)
+        const items = inventory.filter(item => item.agent_id === agent.id && Number(item.qty || 0) > 0 && (focusProduct === "all" || item.product_name === focusProduct))
           .map(item => ({ product: item.product_name, qty: Number(item.qty || 0) }));
         items.forEach(item => { stockByProduct[item.product] = (stockByProduct[item.product] || 0) + item.qty; });
         return { agent, items };
@@ -1319,7 +1322,7 @@ export default function InfinistoresCRM() {
         const comparison = stateSort.key === "state" ? String(leftValue).localeCompare(String(rightValue)) : leftValue - rightValue;
         return comparison * (stateSort.direction === "asc" ? 1 : -1) || left.state.localeCompare(right.state);
       });
-  }, [statsOrders, cAgents, inventory, stateSort]);
+  }, [statsOrders, cAgents, inventory, focusProduct, stateSort]);
 
   // Phase 7: per-caller effectiveness (over the selected stats period)
   const callerStats = useMemo(() => callers.map(c => {
@@ -1337,7 +1340,7 @@ export default function InfinistoresCRM() {
   // Monthly trend (last 6 months) — always all-time, independent of the period pills.
   const monthlyTrend = useMemo(() => {
     const m = {};
-    cOrders.forEach(o => {
+    cOrders.filter(o => focusProduct === "all" || o.product === focusProduct).forEach(o => {
       const key = (o.created_at || "").slice(0, 7); // YYYY-MM
       if (!key) return;
       const b = m[key] = m[key] || { key, orders: 0, delivered: 0, rev: 0 };
@@ -1345,7 +1348,7 @@ export default function InfinistoresCRM() {
       if (o.status === "delivered") { b.delivered++; b.rev += (o.actual_price_collected || o.price || 0); }
     });
     return Object.values(m).sort((a, b) => a.key.localeCompare(b.key)).slice(-6);
-  }, [cOrders]);
+  }, [cOrders, focusProduct]);
 
   // This-month-to-date vs same span of last month (fair like-for-like).
   const momCompare = useMemo(() => {
@@ -1355,12 +1358,12 @@ export default function InfinistoresCRM() {
     const lastFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastTo = new Date(now.getFullYear(), now.getMonth() - 1, Math.min(now.getDate(), prevMonthDays), now.getHours(), now.getMinutes(), now.getSeconds());
     const calc = (from, to) => {
-      const os = cOrders.filter(o => { const d = new Date(o.created_at); return d >= from && d <= to; });
+      const os = cOrders.filter(o => { const d = new Date(o.created_at); return d >= from && d <= to && (focusProduct === "all" || o.product === focusProduct); });
       const del = os.filter(o => o.status === "delivered");
       return { orders: os.length, delivered: del.length, rate: os.length ? Math.round(del.length / os.length * 100) : 0, rev: del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0) };
     };
     return { now: calc(thisFrom, now), prev: calc(lastFrom, lastTo) };
-  }, [cOrders]);
+  }, [cOrders, focusProduct]);
 
   // Agents ranked by delivery rate for the selected period (idle = holds stock, delivered nothing).
   const agentLeaderboard = useMemo(() => cAgents.map(a => ({ a, s: agentSt[a.id] || {} }))
@@ -1848,7 +1851,7 @@ export default function InfinistoresCRM() {
   // Rendered via a JSX variable so both screens share one instance definition.
   // (Plain object, NOT useMemo — this line sits after the early returns above,
   // so a hook here would violate the Rules of Hooks.)
-  const statsStrip = <StatsStrip cards={kpiCards} range={statsRange} setRange={setStatsRange} from={statsFrom} setFrom={setStatsFrom} to={statsTo} setTo={setStatsTo} />;
+  const statsStrip = <StatsStrip cards={kpiCards} range={statsRange} setRange={setStatsRange} from={statsFrom} setFrom={setStatsFrom} to={statsTo} setTo={setStatsTo} product={focusProduct} setProduct={setFocusProduct} products={productsList} />;
   // ── ORDERS ──
   const OrdersScreen = (
     <div>
@@ -2002,7 +2005,7 @@ export default function InfinistoresCRM() {
           {caps.agents === "edit" && <Btn onClick={() => setShowAddAgent(true)}><Plus size={16} />Add agent</Btn>}
         </div>
       </div>
-      {cAgents.length > 0 && <PeriodFilter range={statsRange} setRange={setStatsRange} from={statsFrom} setFrom={setStatsFrom} to={statsTo} setTo={setStatsTo} />}
+      {cAgents.length > 0 && <PeriodFilter range={statsRange} setRange={setStatsRange} from={statsFrom} setFrom={setStatsFrom} to={statsTo} setTo={setStatsTo} product={focusProduct} setProduct={setFocusProduct} products={productsList} />}
       {cAgents.length > 0 && <div className="cx-grid cx-kpis" style={{ marginBottom: "16px" }}>
         <KPI accent="#1a7a4c" v={agentTotals.assigned} l="Total assigned" icon={ClipboardList} />
         <KPI accent="#1d4ed8" v={agentTotals.delivered} l="Delivered" icon={CheckCircle2} />
@@ -2198,7 +2201,7 @@ export default function InfinistoresCRM() {
       <div className="cx-analytics-label">Decision view</div>
       {country === "nigeria" && <Card className="cx-insight-card">
         <div className="cx-card-head">
-          <div><div className="cx-section-t">Decision overview</div><div className="cx-sub">Nigeria only · selected-period results use the order-received date</div></div>
+          <div><div className="cx-section-t">Decision overview</div><div className="cx-sub">Nigeria only · {focusProduct === "all" ? "all products" : focusProduct} · selected-period results use the order-received date</div></div>
           <Btn v="secondary" sz="xs" onClick={() => setDecisionRefreshKey(value => value + 1)} disabled={decisionLoading}><RefreshCw size={13} />{decisionLoading ? "Loading" : "Refresh"}</Btn>
         </div>
         {decisionError ? <div style={{ margin: "0 18px 18px", padding: "12px 14px", borderRadius: T.r, background: T.warningBg, color: T.warning, fontSize: "12px", fontWeight: 600 }}>Decision metrics are unavailable: {decisionError}</div> : decisionLoading && !decisionMetrics ? <div style={{ padding: "0 18px 18px", color: T.textMuted, fontSize: "13px" }}>Loading a compact decision summary…</div> : decisionMetrics && <div className="cx-insight-body">
@@ -2208,7 +2211,7 @@ export default function InfinistoresCRM() {
               { l: "Delivered units", v: Number(decisionOverview.delivered_units || 0).toLocaleString(), d: averageUnitsPerDeliveredOrder == null ? "No delivered orders" : `${averageUnitsPerDeliveredOrder.toFixed(1)} units per delivered order` },
               { l: "Delivered sales", v: decisionMoney(decisionOverview.net_revenue), d: `${Number(decisionOverview.delivered_orders || 0).toLocaleString()} orders received this period, after delivery fees` },
               { l: "Tagged ad spend", v: decisionMoney(decisionFinance.tagged_ad_spend), d: Number(decisionFinance.unallocated_ad_spend || 0) > 0 ? `${decisionMoney(decisionFinance.unallocated_ad_spend)} still unallocated` : "All recorded spend is tagged" },
-              { l: "Cash received", v: decisionMoney(decisionFinance.cash_received), d: "Cash-flow entries recorded this period" },
+              { l: "Cash received", v: focusProduct === "all" ? decisionMoney(decisionFinance.cash_received) : "—", d: focusProduct === "all" ? "Cash-flow entries recorded this period" : "Cash is not allocated by product" },
             ].map(card => <div key={card.l} className="cx-insight-kpi">
               <div className="label">{card.l}</div>
               <div className="value">{card.v}</div>
