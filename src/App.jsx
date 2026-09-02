@@ -867,6 +867,8 @@ export default function InfinistoresCRM() {
 
   const [tab, setTab] = useState("orders");
   const [invTab, setInvTab] = useState("products");
+  const [anaTab, setAnaTab] = useState("overview");
+  const [showDecisionNote, setShowDecisionNote] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   // Ghana is managed in the finance dashboard. CRM remains Nigeria-only while
   // preserving all historical Ghana records in the shared database.
@@ -2191,6 +2193,14 @@ export default function InfinistoresCRM() {
     const arrow = active ? stateSort.direction === "asc" ? "↑" : "↓" : "↕";
     return <th className={right ? "r" : ""}><button className={`cx-sort-header${active ? " on" : ""}`} onClick={() => toggleStateSort(sortKey)} title={`Sort by ${label}`} aria-label={`Sort by ${label}`}><span>{label}</span><span className="arr" aria-hidden="true">{arrow}</span></button></th>;
   };
+  // Role-aware analytics sub-tabs: accountant sees the money views (Overview +
+  // Products); managers/admins also get People and States.
+  const anaTabs = [
+    { id: "overview", label: "Overview" },
+    { id: "products", label: "Products" },
+    ...(me?.role === "accountant" ? [] : [{ id: "people", label: "People" }, { id: "states", label: "States" }]),
+  ];
+  const activeAnaTab = anaTabs.some(t => t.id === anaTab) ? anaTab : "overview";
   const AnalyticsScreen = (
     <div className="cx-analytics">
       <div className="cx-head">
@@ -2198,8 +2208,9 @@ export default function InfinistoresCRM() {
       </div>
       {statsStrip}
 
-      <div className="cx-analytics-label">Decision view</div>
-      {country === "nigeria" && <Card className="cx-insight-card">
+      <div className="cx-tabs">{anaTabs.map(s => <button key={s.id} className={`cx-tab ${activeAnaTab === s.id ? "on" : ""}`} onClick={() => setAnaTab(s.id)}>{s.label}</button>)}</div>
+
+      {activeAnaTab === "products" && country === "nigeria" && <Card className="cx-insight-card">
         <div className="cx-card-head">
           <div><div className="cx-section-t">Decision overview</div><div className="cx-sub">Nigeria only · {focusProduct === "all" ? "all products" : focusProduct} · selected-period results use the order-received date</div></div>
           <Btn v="secondary" sz="xs" onClick={() => setDecisionRefreshKey(value => value + 1)} disabled={decisionLoading}><RefreshCw size={13} />{decisionLoading ? "Loading" : "Refresh"}</Btn>
@@ -2226,9 +2237,10 @@ export default function InfinistoresCRM() {
               { l: "Out of stock (excluded)", v: decisionOverview.mature_out_of_stock, c: T.textMuted, bg: T.surfaceAlt },
             ].map(outcome => <span key={outcome.l} className="cx-outcome-chip" style={{ color: outcome.c, background: outcome.bg }}>{outcome.l}: {Number(outcome.v || 0).toLocaleString()}</span>)}
           </div>
-          <div className="cx-insight-note">
+          <div style={{ margin: "0 0 4px" }}><Btn v="secondary" sz="xs" onClick={() => setShowDecisionNote(v => !v)}>{showDecisionNote ? "Hide how this is calculated" : "How is this calculated?"}</Btn></div>
+          {showDecisionNote && <div className="cx-insight-note">
             “7-day cohort” includes every order received at least {decisionMetrics.maturity_days} days ago. The headline rate is delivered ÷ all eligible cohort orders, so still-open orders remain in the denominator; only out-of-stock orders are excluded. {resolvedDeliveryRate != null ? ` Among resolved orders only, the rate is ${resolvedDeliveryRate}% (${decisionOverview.mature_delivered} of ${matureResolved}).` : ""} {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} Stock cover still uses units actually delivered in the last 28 days.
-          </div>
+          </div>}
           <div className="cx-insight-section">
           <div className="cx-insight-section-head"><div className="cx-section-t">Product performance</div><div className="cx-sub">Revenue, delivery, spend and stock cover</div></div>
           <div style={{ overflowX: "auto" }}><table className="cx-table cx-table-dense">
@@ -2253,9 +2265,9 @@ export default function InfinistoresCRM() {
           {Number(decisionOverview.missing_cogs_orders || 0) > 0 && <div style={{ marginTop: "10px", fontSize: "11px", color: T.warning }}>COGS is not shown yet: {decisionOverview.missing_cogs_orders} delivered order{Number(decisionOverview.missing_cogs_orders) === 1 ? " is" : "s are"} missing a cost snapshot.</div>}
         </div>}
       </Card>}
+      {activeAnaTab === "products" && country !== "nigeria" && <Card style={{ padding: "24px", color: T.textMuted, fontSize: "13px" }}>Product decision metrics are available for the Nigeria book only.</Card>}
 
-      <div className="cx-analytics-label">Period performance</div>
-      <Card style={{ padding: "18px" }}>
+      {activeAnaTab === "overview" && <Card style={{ padding: "18px" }}>
         <div className="cx-section-t" style={{ marginBottom: "12px" }}>This month vs last month <span className="cx-sub" style={{ marginLeft: "6px" }}>· to the same point in the month</span></div>
         <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: "10px" }}>
           {[
@@ -2274,9 +2286,9 @@ export default function InfinistoresCRM() {
             </div>;
           })}
         </div>
-      </Card>
+      </Card>}
 
-      <Card style={{ padding: "18px" }}>
+      {activeAnaTab === "overview" && <Card style={{ padding: "18px" }}>
         <div className="cx-section-t" style={{ marginBottom: "14px" }}>Trend — last {monthlyTrend.length} month{monthlyTrend.length !== 1 ? "s" : ""}</div>
         {monthlyTrend.length === 0 ? <div style={{ color: T.textMuted, fontSize: "13px" }}>No data yet.</div> : (() => {
           const maxOrders = Math.max(...monthlyTrend.map(m => m.orders), 1);
@@ -2292,10 +2304,9 @@ export default function InfinistoresCRM() {
           </div>;
         })()}
         <div style={{ display: "flex", gap: "14px", marginTop: "12px", fontSize: "10px", color: T.textMuted, flexWrap: "wrap" }}><span><i style={{ display: "inline-block", width: "9px", height: "9px", background: T.accent, borderRadius: "2px", marginRight: "4px" }} />Delivered</span><span><i style={{ display: "inline-block", width: "9px", height: "9px", background: T.surfaceAlt, borderRadius: "2px", marginRight: "4px" }} />Total orders</span><span>Top figure = revenue collected</span></div>
-      </Card>
+      </Card>}
 
-      <div className="cx-analytics-label">People</div>
-      {FEATURE_CALLER && callers.length > 0 && <Card style={{ overflow: "hidden" }}>
+      {activeAnaTab === "people" && FEATURE_CALLER && callers.length > 0 && <Card style={{ overflow: "hidden" }}>
         <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Caller effectiveness</span><span className="cx-sub" style={{ marginLeft: "8px" }}>of the orders given to each caller, where did they land</span></div>
         <div style={{ overflowX: "auto" }}><table className="cx-table">
           <thead><tr><th>Caller</th><th className="r">Assigned</th><th className="r">Delivered</th><th>Delivery rate</th><th className="r">Lost on call</th><th className="r">Lost at delivery</th><th className="r">In progress</th></tr></thead>
@@ -2317,7 +2328,7 @@ export default function InfinistoresCRM() {
         <div style={{ padding: "8px 16px", fontSize: "11px", color: T.textMuted, borderTop: `1px solid ${T.borderLight}` }}>Lost on call = phone-skill signal (caller-influenced). Lost at delivery = more about the agent/area.</div>
       </Card>}
 
-      {cAgents.length > 0 && <Card style={{ overflow: "hidden" }}>
+      {activeAnaTab === "people" && cAgents.length > 0 && <Card style={{ overflow: "hidden" }}>
         <div style={{ padding: "16px 16px 4px" }}><span className="cx-section-t">Agent leaderboard</span><span className="cx-sub" style={{ marginLeft: "8px" }}>for the selected period · idle = holding stock, delivered nothing</span></div>
         <div style={{ overflowX: "auto" }}><table className="cx-table">
           <thead><tr><th>Agent</th><th className="r">Assigned</th><th className="r">Delivered</th><th>Delivery rate</th><th className="r">Stock</th><th className="r">Revenue</th></tr></thead>
@@ -2336,8 +2347,7 @@ export default function InfinistoresCRM() {
         </table></div>
       </Card>}
 
-      <div className="cx-analytics-label">Conversion and operations</div>
-      <Card className="cx-funnel">
+      {activeAnaTab === "overview" && <Card className="cx-funnel">
         <div className="lead">
           <span className="big cx-num">{funnel.placed > 0 ? Math.round(funnel.delivered / funnel.placed * 100) : 0}%</span>
           <div><div className="cx-section-t">Order-to-doorstep</div>
@@ -2356,9 +2366,9 @@ export default function InfinistoresCRM() {
         <div className="cx-legend">
           {outcomes.map(o => <span key={o.t}><i style={{ background: o.c }} />{o.t} · {o.v}</span>)}
         </div>
-      </Card>
+      </Card>}
 
-      <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr" }}>
+      {activeAnaTab === "overview" && <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr" }}>
         <Card style={{ padding: "18px" }}>
           <div className="cx-section-t" style={{ marginBottom: "12px" }}>Status breakdown</div>
           {STATUSES.map(s => { const c = statsOrders.filter(o => o.status === s.value).length; const p = statsOrders.length > 0 ? c / statsOrders.length * 100 : 0; return (
@@ -2375,7 +2385,9 @@ export default function InfinistoresCRM() {
             {[{ l: "Collected", v: stats.rev, c: "#1a7a4c", bg: T.accentLight }, { l: "Delivery fees", v: stats.fees, c: T.danger, bg: T.dangerBg }, { l: "Net remittance", v: stats.net, c: "#1d4ed8", bg: "#e8f1ff" }].map(r => <div key={r.l} style={{ padding: "14px 16px", background: r.bg, borderRadius: T.r, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: "12px", color: r.c, fontWeight: 700 }}>{r.l}</span><span className="cx-num" style={{ fontSize: "20px", fontWeight: 800, color: r.c }}>{cur}{r.v.toLocaleString()}</span></div>)}
           </div>
         </Card>
-        <Card style={{ overflow: "hidden", gridColumn: isMobile ? "auto" : "1/-1" }}>
+      </div>}
+
+      {activeAnaTab === "states" && <Card style={{ overflow: "hidden" }}>
           <div className="cx-card-head"><div><div className="cx-section-t">State operations</div><div className="cx-sub">Active states only. Stock is recorded against agents serving each state.</div></div></div>
           {stateOperations.length === 0 ? <div style={{ padding: "24px 16px", color: T.textMuted, fontSize: "13px" }}>No selected-period orders or agent stock yet.</div> : <div style={{ overflowX: "auto" }}><table className="cx-table">
             <thead><tr><StateSortHeader label="State" sortKey="state" /><StateSortHeader label="Orders" sortKey="orders" right /><StateSortHeader label="Delivered" sortKey="delivered" right /><StateSortHeader label="Delivery rate" sortKey="deliveryRate" right /><StateSortHeader label="Stock with agents" sortKey="stockUnits" right /><StateSortHeader label="Agents" sortKey="agentCount" right /><th className="r"></th></tr></thead>
@@ -2410,8 +2422,7 @@ export default function InfinistoresCRM() {
               ];
             })}</tbody>
           </table></div>}
-        </Card>
-      </div>
+        </Card>}
     </div>
   );
 
