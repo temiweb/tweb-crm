@@ -1311,9 +1311,10 @@ export default function InfinistoresCRM() {
       });
       const stockUnits = Object.values(stockByProduct).reduce((total, qty) => total + qty, 0);
       const openUnits = Object.values(demandByProduct).reduce((total, qty) => total + qty, 0);
+      const deliveredUnits = delivered.reduce((total, order) => total + Number(order.actual_qty_delivered || order.qty || 0), 0);
       const shortfallUnits = Object.entries(demandByProduct).reduce((total, [product, qty]) => total + Math.max(0, qty - (stockByProduct[product] || 0)), 0);
       return {
-        state, orders: stateOrders.length, delivered: delivered.length,
+        state, orders: stateOrders.length, delivered: delivered.length, deliveredUnits,
         deliveryRate: stateOrders.length ? Math.round(delivered.length / stateOrders.length * 100) : null,
         openOrders: openOrders.length, openUnits, stockUnits, shortfallUnits,
         stockByProduct, demandByProduct, deliveredByProduct, agentStock, agentCount: agentsForState.length,
@@ -2243,16 +2244,25 @@ export default function InfinistoresCRM() {
             “7-day cohort” includes every order received at least {decisionMetrics.maturity_days} days ago. The headline rate is delivered ÷ all eligible cohort orders, so still-open orders remain in the denominator; only out-of-stock orders are excluded. {resolvedDeliveryRate != null ? ` Among resolved orders only, the rate is ${resolvedDeliveryRate}% (${decisionOverview.mature_delivered} of ${matureResolved}).` : ""} {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} Stock cover still uses units actually delivered in the last 28 days.
           </div>}
           <div className="cx-insight-section">
-          <div className="cx-insight-section-head"><div className="cx-section-t">Product performance</div><div className="cx-sub">Revenue, delivery, spend and stock cover</div></div>
+          <div className="cx-insight-section-head"><div className="cx-section-t">Product performance</div><div className="cx-sub">Orders, delivery, revenue and ad spend</div></div>
           <div style={{ overflowX: "auto" }}><table className="cx-table cx-table-dense">
-            <thead><tr><th>Product</th><th className="r">Orders</th><th className="r">7-day cohort rate</th><th className="r">Delivered orders / units</th><th className="r">Delivered sales</th><th className="r">Ad spend</th><th className="r">Ad spend / delivery</th><th className="r">Warehouse</th><th className="r">With agents</th><th className="r">Cover</th></tr></thead>
+            <thead><tr><th>Product</th><th className="r">Orders</th><th className="r">7-day cohort rate</th><th className="r">Delivered orders / units</th><th className="r">Delivered sales</th><th className="r">Ad spend</th><th className="r">Ad spend / delivery</th></tr></thead>
             <tbody>{decisionProducts.map(product => {
-              const cover = product.weeks_cover == null ? "-" : `${product.weeks_cover} wk`;
-              const color = product.weeks_cover == null ? T.textMuted : product.weeks_cover < 2 ? T.danger : product.weeks_cover < 4 ? T.warning : T.accent;
               const rate = product.delivery_rate == null ? "-" : `${product.delivery_rate}%`;
               const revenueShare = product.revenue_share == null ? "" : ` · ${product.revenue_share}%`;
               const adPerDelivery = product.ad_spend_per_delivered_order == null ? "-" : decisionMoney(product.ad_spend_per_delivered_order);
-              return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} orders / {Number(product.delivered_units || 0).toLocaleString()} units</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td><td className="r cx-num">{Number(product.warehouse_qty || 0).toLocaleString()}</td><td className="r cx-num">{Number(product.agent_qty || 0).toLocaleString()}</td><td className="r cx-num" style={{ fontWeight: 800, color }}>{cover}</td></tr>;
+              return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} orders / {Number(product.delivered_units || 0).toLocaleString()} units</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td></tr>;
+            })}</tbody>
+          </table></div>
+          </div>
+          <div className="cx-insight-section">
+          <div className="cx-insight-section-head"><div className="cx-section-t">Stock cover</div><div className="cx-sub">Warehouse + field stock vs recent delivery pace</div></div>
+          <div style={{ overflowX: "auto" }}><table className="cx-table cx-table-dense">
+            <thead><tr><th>Product</th><th className="r">Warehouse</th><th className="r">With agents</th><th className="r">Weeks of cover</th></tr></thead>
+            <tbody>{decisionProducts.map(product => {
+              const cover = product.weeks_cover == null ? "-" : `${product.weeks_cover} wk`;
+              const color = product.weeks_cover == null ? T.textMuted : product.weeks_cover < 2 ? T.danger : product.weeks_cover < 4 ? T.warning : T.accent;
+              return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.warehouse_qty || 0).toLocaleString()}</td><td className="r cx-num">{Number(product.agent_qty || 0).toLocaleString()}</td><td className="r cx-num" style={{ fontWeight: 800, color }}>{cover}</td></tr>;
             })}</tbody>
           </table></div>
           </div>
@@ -2397,7 +2407,7 @@ export default function InfinistoresCRM() {
       {activeAnaTab === "states" && <Card style={{ overflow: "hidden" }}>
           <div className="cx-card-head"><div><div className="cx-section-t">State operations</div><div className="cx-sub">Active states only. Stock is recorded against agents serving each state.</div></div></div>
           {stateOperations.length === 0 ? <div style={{ padding: "24px 16px", color: T.textMuted, fontSize: "13px" }}>No selected-period orders or agent stock yet.</div> : <div style={{ overflowX: "auto" }}><table className="cx-table">
-            <thead><tr><StateSortHeader label="State" sortKey="state" /><StateSortHeader label="Orders" sortKey="orders" right /><StateSortHeader label="Delivered" sortKey="delivered" right /><StateSortHeader label="Delivery rate" sortKey="deliveryRate" right /><StateSortHeader label="Stock with agents" sortKey="stockUnits" right /><StateSortHeader label="Agents" sortKey="agentCount" right /><th className="r"></th></tr></thead>
+            <thead><tr><StateSortHeader label="State" sortKey="state" /><StateSortHeader label="Orders" sortKey="orders" right /><StateSortHeader label="Delivered" sortKey="delivered" right /><StateSortHeader label="Units delivered" sortKey="deliveredUnits" right /><StateSortHeader label="Delivery rate" sortKey="deliveryRate" right /><StateSortHeader label="Stock with agents" sortKey="stockUnits" right /><StateSortHeader label="Agents" sortKey="agentCount" right /><th className="r"></th></tr></thead>
             <tbody>{stateOperations.flatMap(row => {
               const expanded = expandedState === row.state;
               const productNames = [...new Set([...Object.keys(row.stockByProduct), ...Object.keys(row.deliveredByProduct)])].sort();
@@ -2406,12 +2416,13 @@ export default function InfinistoresCRM() {
                   <td className="td-product">{row.state}</td>
                   <td className="r cx-num">{row.orders.toLocaleString()}</td>
                   <td className="r cx-num" style={{ fontWeight: 700, color: row.delivered ? T.accent : T.textMuted }}>{row.delivered.toLocaleString()}</td>
+                  <td className="r cx-num">{row.deliveredUnits.toLocaleString()}</td>
                   <td className="r cx-num">{row.deliveryRate == null ? "-" : `${row.deliveryRate}%`}</td>
                   <td className="r cx-num">{row.stockUnits.toLocaleString()}</td>
                   <td className="r cx-num">{row.agentCount.toLocaleString()}</td>
                   <td className="r"><Btn v="secondary" sz="xs" onClick={() => setExpandedState(expanded ? null : row.state)}>{expanded ? "Hide" : "Details"}</Btn></td>
                 </tr>,
-                expanded ? <tr key={`state-detail-${row.state}`}><td colSpan={7} className="cx-state-detail">
+                expanded ? <tr key={`state-detail-${row.state}`}><td colSpan={8} className="cx-state-detail">
                   <div className="cx-state-detail-grid">
                     <div><div className="cx-state-detail-title">Product stock and deliveries</div>
                       {productNames.length === 0 ? <div style={{ color: T.textMuted, fontSize: "12px" }}>No product stock or deliveries in the selected period.</div> : productNames.map(product => {
