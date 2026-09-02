@@ -869,6 +869,7 @@ export default function InfinistoresCRM() {
   const [invTab, setInvTab] = useState("products");
   const [anaTab, setAnaTab] = useState("overview");
   const [showDecisionNote, setShowDecisionNote] = useState(false);
+  const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   // Ghana is managed in the finance dashboard. CRM remains Nigeria-only while
   // preserving all historical Ghana records in the shared database.
@@ -1838,7 +1839,7 @@ export default function InfinistoresCRM() {
   // ── shared content blocks ──
   const kpiCards = [
     { l: "Orders", v: stats.total, accent: "#1a7a4c", icon: ClipboardList },
-    { l: "Delivered", v: stats.delivered, d: `${stats.rate}% rate`, dir: "flat", accent: "#1d4ed8", icon: CheckCircle2 },
+    { l: "Delivered", v: stats.delivered, d: `${stats.rate}% of period orders`, dir: "flat", accent: "#1d4ed8", icon: CheckCircle2 },
     { l: "Units sold", v: stats.unitsSold, d: `of ${stats.totalUnitsOrdered}`, dir: "flat", accent: "#7c3aed", icon: Package },
     { l: "Pending", v: stats.pending, accent: "#b45309", icon: Clock },
     { l: "Failed", v: stats.failed, accent: "#b91c1c", icon: X },
@@ -2267,13 +2268,21 @@ export default function InfinistoresCRM() {
       </Card>}
       {activeAnaTab === "products" && country !== "nigeria" && <Card style={{ padding: "24px", color: T.textMuted, fontSize: "13px" }}>Product decision metrics are available for the Nigeria book only.</Card>}
 
+      {activeAnaTab === "overview" && country === "nigeria" && matureDeliveryRate != null && <Card style={{ padding: "20px", display: "flex", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
+        <div className="cx-num" style={{ fontSize: "44px", fontWeight: 800, fontFamily: T.fd, lineHeight: 1, color: matureDeliveryRate >= 60 ? T.accent : matureDeliveryRate >= 40 ? T.warning : T.danger }}>{matureDeliveryRate}%</div>
+        <div style={{ minWidth: "200px", flex: 1 }}>
+          <div className="cx-section-t">Delivery rate <span style={{ color: T.textMuted, fontWeight: 600, fontSize: "12px" }}>· 7-day cohort · headline number</span></div>
+          <div className="cx-sub">{Number(decisionOverview.mature_delivered || 0).toLocaleString()} of {matureEligible.toLocaleString()} matured orders delivered. Other delivery-rate figures on this page use different windows and will differ.</div>
+        </div>
+      </Card>}
+
       {activeAnaTab === "overview" && <Card style={{ padding: "18px" }}>
         <div className="cx-section-t" style={{ marginBottom: "12px" }}>This month vs last month <span className="cx-sub" style={{ marginLeft: "6px" }}>· to the same point in the month</span></div>
         <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: "10px" }}>
           {[
             { l: "Orders", now: momCompare.now.orders, prev: momCompare.prev.orders },
             { l: "Delivered", now: momCompare.now.delivered, prev: momCompare.prev.delivered },
-            { l: "Delivery rate", now: momCompare.now.rate, prev: momCompare.prev.rate, pct: true },
+            { l: "Delivered % (period)", now: momCompare.now.rate, prev: momCompare.prev.rate, pct: true },
             { l: "Revenue", now: momCompare.now.rev, prev: momCompare.prev.rev, money: true },
           ].map(k => {
             const diff = k.now - k.prev, up = diff >= 0;
@@ -2368,24 +2377,22 @@ export default function InfinistoresCRM() {
         </div>
       </Card>}
 
-      {activeAnaTab === "overview" && <div className="cx-grid" style={{ gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr" }}>
-        <Card style={{ padding: "18px" }}>
-          <div className="cx-section-t" style={{ marginBottom: "12px" }}>Status breakdown</div>
-          {STATUSES.map(s => { const c = statsOrders.filter(o => o.status === s.value).length; const p = statsOrders.length > 0 ? c / statsOrders.length * 100 : 0; return (
-            <div key={s.value} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "7px" }}>
-              <span style={{ width: isMobile ? "80px" : "110px", fontSize: "11px", color: T.textMuted, fontWeight: 600 }}>{s.icon} {s.label}</span>
-              <div style={{ flex: 1, background: T.surfaceAlt, borderRadius: "5px", height: "18px", overflow: "hidden" }}><div style={{ width: `${p}%`, background: s.color, height: "100%", borderRadius: "5px", minWidth: c > 0 ? "2px" : 0 }} /></div>
-              <span className="cx-num" style={{ width: "35px", textAlign: "right", fontWeight: 800 }}>{c}</span>
-            </div>
-          ); })}
-        </Card>
-        <Card style={{ padding: "18px" }}>
-          <div className="cx-section-t" style={{ marginBottom: "12px" }}>Revenue</div>
-          <div style={{ display: "grid", gap: "10px" }}>
-            {[{ l: "Collected", v: stats.rev, c: "#1a7a4c", bg: T.accentLight }, { l: "Delivery fees", v: stats.fees, c: T.danger, bg: T.dangerBg }, { l: "Net remittance", v: stats.net, c: "#1d4ed8", bg: "#e8f1ff" }].map(r => <div key={r.l} style={{ padding: "14px 16px", background: r.bg, borderRadius: T.r, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: "12px", color: r.c, fontWeight: 700 }}>{r.l}</span><span className="cx-num" style={{ fontSize: "20px", fontWeight: 800, color: r.c }}>{cur}{r.v.toLocaleString()}</span></div>)}
+      {activeAnaTab === "overview" && <Card style={{ padding: "18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+          <div className="cx-section-t">Status breakdown</div>
+          <Btn v="secondary" sz="xs" onClick={() => setShowAllStatuses(v => !v)}>{showAllStatuses ? "Group" : "All statuses"}</Btn>
+        </div>
+        {(showAllStatuses
+          ? STATUSES.map(s => ({ key: s.value, label: `${s.icon} ${s.label}`, color: s.color, count: statsOrders.filter(o => o.status === s.value).length }))
+          : GROUPS.map(g => ({ key: g.id, label: g.label, color: g.c, count: statsOrders.filter(o => getStatus(o.status).group === g.id).length }))
+        ).map(row => { const p = statsOrders.length > 0 ? row.count / statsOrders.length * 100 : 0; return (
+          <div key={row.key} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "7px" }}>
+            <span style={{ width: isMobile ? "120px" : "150px", fontSize: "11px", color: T.textMuted, fontWeight: 600 }}>{row.label}</span>
+            <div style={{ flex: 1, background: T.surfaceAlt, borderRadius: "5px", height: "18px", overflow: "hidden" }}><div style={{ width: `${p}%`, background: row.color, height: "100%", borderRadius: "5px", minWidth: row.count > 0 ? "2px" : 0 }} /></div>
+            <span className="cx-num" style={{ width: "35px", textAlign: "right", fontWeight: 800 }}>{row.count}</span>
           </div>
-        </Card>
-      </div>}
+        ); })}
+      </Card>}
 
       {activeAnaTab === "states" && <Card style={{ overflow: "hidden" }}>
           <div className="cx-card-head"><div><div className="cx-section-t">State operations</div><div className="cx-sub">Active states only. Stock is recorded against agents serving each state.</div></div></div>
