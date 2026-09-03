@@ -56,25 +56,18 @@ function resolvePackage(raw: string): { packName: string; qty: number; price: nu
 }
 
 const svc = { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` };
-const OPEN_STATUSES = "(pending,call_back,postponed,follow_up,confirmed,in_transit)";
-
-// Auto-assign a new order to the active caller with the lightest current load.
+// Atomically rotates each new order through active callers.
 // Returns null if there are no active callers (order stays unassigned → admin queue).
 async function pickCaller(): Promise<string | null> {
   try {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/staff?role=eq.caller&active=eq.true&select=auth_user_id`, { headers: svc });
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/pick_next_caller`, {
+      method: "POST",
+      headers: { ...svc, "Content-Type": "application/json" },
+      body: "{}",
+    });
     if (!r.ok) return null;
-    const list = (await r.json()).map((c: { auth_user_id: string }) => c.auth_user_id).filter(Boolean);
-    if (list.length === 0) return null;
-    if (list.length === 1) return list[0];
-    let best = list[0], bestCount = Infinity;
-    for (const uid of list) {
-      const cr = await fetch(`${SUPABASE_URL}/rest/v1/orders?assigned_to=eq.${uid}&status=in.${OPEN_STATUSES}&select=id`,
-        { headers: { ...svc, Prefer: "count=exact", "Range-Unit": "items", "Range": "0-0" } });
-      const cnt = parseInt((cr.headers.get("content-range") || "*/0").split("/")[1] || "0", 10);
-      if (cnt < bestCount) { bestCount = cnt; best = uid; }
-    }
-    return best;
+    const callerId = await r.json();
+    return typeof callerId === "string" && callerId ? callerId : null;
   } catch { return null; }
 }
 

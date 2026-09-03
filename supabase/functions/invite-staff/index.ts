@@ -11,7 +11,7 @@
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
-const ROLES = ["admin", "caller", "viewer", "manager", "accountant"];
+const ROLES = ["admin", "caller", "viewer", "manager", "accountant", "logistics"];
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
