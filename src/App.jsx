@@ -852,8 +852,9 @@ export default function InfinistoresCRM() {
   // STATE there sees a stale false — which made transient poll failures
   // escalate to the full-screen Connection Error instead of the ⚠ Offline badge.
   const loadedRef = useRef(false);
-  const syncCursorRef = useRef(null); // max orders.updated_at seen — the incremental-sync cursor
+  const syncCursorRef = useRef(null); // max orders.updated_at seen - the incremental-sync cursor
   const ordersRef = useRef([]);
+  const syncTabIdRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [syncError, setSyncError] = useState(false);
@@ -1068,11 +1069,45 @@ export default function InfinistoresCRM() {
     })();
   }, []);
 
-  // Auto-refresh for multi-device sync (only while signed in). 90s (was 30s) —
-  // each refresh re-downloads the full orders table (~98% of egress), so a 3x
-  // longer interval cuts egress ~67% for ~1 extra minute of staleness. The
-  // durable fix is incremental sync (fetch only orders changed since last poll).
-  useEffect(() => { if (!authed) return; const i = setInterval(() => loadAll(3, true, true), 90000); return () => clearInterval(i); }, [authed]);
+  useEffect(() => {
+    if (!authed) return;
+    const leaseKey = `inf-sync-lease:${auth.session?.user?.id || "unknown"}`;
+    const claimLease = () => {
+      try {
+        const now = Date.now();
+        const current = JSON.parse(localStorage.getItem(leaseKey) || "null");
+        if (current?.tabId && current.tabId !== syncTabIdRef.current && current.expiresAt > now) return false;
+        localStorage.setItem(leaseKey, JSON.stringify({ tabId: syncTabIdRef.current, expiresAt: now + 150000 }));
+        return JSON.parse(localStorage.getItem(leaseKey) || "{}").tabId === syncTabIdRef.current;
+      } catch { return true; }
+    };
+    const releaseLease = () => {
+      try {
+        const current = JSON.parse(localStorage.getItem(leaseKey) || "null");
+        if (current?.tabId === syncTabIdRef.current) localStorage.removeItem(leaseKey);
+      } catch {}
+    };
+    const sync = () => {
+      if (document.hidden || !claimLease()) return;
+      loadAll(3, true, true);
+    };
+    const onVisibility = () => {
+      if (document.hidden) releaseLease();
+      else sync();
+    };
+    const onStorage = event => {
+      if (event.key === leaseKey && !document.hidden) sync();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("storage", onStorage);
+    const interval = setInterval(sync, 90000);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("storage", onStorage);
+      releaseLease();
+    };
+  }, [authed]);
 
   // Load status history when an order detail is opened (best-effort)
   useEffect(() => {
