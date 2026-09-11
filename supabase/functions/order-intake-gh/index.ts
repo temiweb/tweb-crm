@@ -134,6 +134,7 @@ Deno.serve(async (req) => {
     address: rawAddress, state: region,
     product: productName, pack_name: packageLabel,
     qty: quantity ?? 1, price: expectedTotal ?? 0,
+    notes: comment,                 // alt phone + notes + raw address → becomes VDL's comment at push
     status: "pending", country: "ghana", source: "wpforms-gh",
     assigned_to: null,
   };

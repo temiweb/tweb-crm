@@ -2606,7 +2606,13 @@ export default function InfinistoresCRM() {
               <td className="cx-cust"><b>{o.name}</b><span>{cleanPhone(o.phone)}</span></td>
               <td><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.product} ×{o.vdl.gh_quantity}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{ghMoney(o.vdl.gh_expected_total)}{o.vdl.gh_discount_amount > 0 ? ` · save ${ghMoney(o.vdl.gh_discount_amount)}` : ""}</div></td>
               <td style={{ fontSize: "12px" }}>{o.state}</td>
-              <td style={{ minWidth: "220px" }}><input value={draftVal(o.id, "location", o.vdl.gh_location || o.address || "")} onChange={e => setDraft(o.id, "location", e.target.value)} style={{ width: "100%", padding: "7px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} /></td>
+              <td style={{ minWidth: "240px" }}>
+                <input value={draftVal(o.id, "location", o.vdl.gh_location || o.address || "")} onChange={e => setDraft(o.id, "location", e.target.value)} placeholder="Closest landmark for VDL" style={{ width: "100%", padding: "7px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "3px", alignItems: "center" }}>
+                  <span title={o.vdl.gh_raw_address} style={{ fontSize: "10px", color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "170px" }}>{o.vdl.gh_raw_address}</span>
+                  <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(o.vdl.gh_raw_address || o.address || "")}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: "10px", color: T.accent, fontWeight: 700, whiteSpace: "nowrap", textDecoration: "none" }}>Maps ↗</a>
+                </div>
+              </td>
               <td className="r"><Btn sz="xs" onClick={() => doGhApprove(o)}>Approve</Btn></td>
             </tr>
           ))}</tbody>
