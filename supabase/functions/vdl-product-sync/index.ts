@@ -31,8 +31,13 @@ async function alert(level: "info" | "warn" | "error", message: string): Promise
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const VDL_BASE = (Deno.env.get("VDL_API_BASE_URL") ?? "").trim().replace(/\/+$/, "");
-// Tolerate a pasted "Bearer " prefix or surrounding whitespace in the secret.
-const VDL_TOKEN = (Deno.env.get("VDL_API_TOKEN") ?? "").trim().replace(/^Bearer\s+/i, "");
+// Tolerate a pasted "Bearer " prefix, surrounding quotes, and any whitespace or
+// line breaks that a copy/paste may have introduced. A JWT has none of these.
+const VDL_TOKEN = (Deno.env.get("VDL_API_TOKEN") ?? "")
+  .trim().replace(/^Bearer\s+/i, "").replace(/["']/g, "").replace(/\s+/g, "");
+// Safe shape hint for diagnosing 401s — length + first 3 chars only (a JWT
+// starts "eyJ"); never logs the secret itself.
+const TOKEN_SHAPE = `len=${VDL_TOKEN.length} head=${JSON.stringify(VDL_TOKEN.slice(0, 3))}`;
 const LOW_STOCK = parseInt(Deno.env.get("GH_LOW_STOCK_THRESHOLD") ?? "10", 10);
 
 const svc = { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` };
@@ -46,7 +51,7 @@ async function fetchAllProducts(): Promise<Record<string, unknown>[]> {
     const r = await fetch(`${VDL_BASE}/products?per_page=100&page=${page}`, {
       headers: { Authorization: `Bearer ${VDL_TOKEN}`, Accept: "application/json" },
     });
-    if (!r.ok) throw new Error(`VDL /products ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    if (!r.ok) throw new Error(`VDL /products ${r.status}: ${(await r.text()).slice(0, 200)} [token ${TOKEN_SHAPE}]`);
     const body = await r.json();
     const container = body?.data ?? body;
     const rows: Record<string, unknown>[] = Array.isArray(container) ? container : (container?.data ?? []);
