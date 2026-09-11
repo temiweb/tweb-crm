@@ -243,7 +243,7 @@ Stop polling on a terminal state or after 30 days in `synced`.
 
 ## 9. CRM UI: Ghana Ready-to-Push view
 
-A narrow view under Orders, visible only to staff whose `countries` includes `GH` (until Phase 5, gate on role/admin). Three tabs on `vdl_sync_status`: **Needs review**, **Held**, **Synced**.
+Lives in the dedicated **Ghana (VDL)** nav section — the NG/GH country switcher was deprecated, so Ghana is its own top-level workspace (not a country mode of the NG screens). Gated to management roles (`caps.analytics`) until staff-country scoping lands in Phase 5. The section already hosts the read-only catalogue (Phase 1); Phase 2 adds three tabs on `vdl_sync_status`: **Needs review**, **Held**, **Synced**.
 
 - **Needs review:** name, phone, package, region, raw address, and an **editable location field** pre-filled with the raw address. Operator corrects it against Google Maps, clicks **Approve** → `approved`. Bulk approve for rows needing no correction.
 - **Held:** the specific `vdl_sync_error` with inline fixes — region dropdown for `unknown_region`, editable qty/total/discount for `missing_structured_fields`, retry once stock replenished for `insufficient_stock`.

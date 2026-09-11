@@ -31,7 +31,7 @@ This is a discipline held throughout, not a one-time toggle. Ghana is a **fulfil
 - **No Ghana analytics rebuild.** The Analytics screen is Nigeria-shaped (the decision-metrics RPC is Nigeria-only; plus agent leaderboard, caller effectiveness, stock-by-state — none apply). Ghana gets a *thin* readout (orders in / pushed / delivered-by-VDL-state / VDL financials) in the Ready-to-Push "Synced" tab and the finance dashboard. **Do not** make the analytics suite "work for Ghana too" — the biggest rebuild trap.
 - **No NG status workflow on Ghana orders.** Keep `vdl_state_label` separate from the 16-status NG taxonomy and the money-guard/collected-cash logic. Map VDL states onto familiar chips **for display only** — never to trigger NG behaviour (timestamp stamping, inventory decrements, auto-assign).
 
-**The practical test:** when `country='ghana'` is selected, the app shows a *reduced* surface — essentially the Ready-to-Push view plus the read-only VDL catalogue — not a Ghana-flavoured copy of the caller/agent/inventory/analytics screens. If you find yourself making an existing NG screen "Ghana-aware," that's the rebuild creeping in; the answer is almost always "Ghana doesn't need that screen."
+**The practical test:** the NG country switcher was deprecated (`country` is now hardcoded to `"nigeria"`), so Ghana lives in its **own top-level "Ghana (VDL)" nav section** — the read-only catalogue (Phase 1) and the Ready-to-Push view (Phase 2) — not a Ghana mode of the caller/agent/inventory/analytics screens. If you find yourself making an existing NG screen "Ghana-aware," that's the rebuild creeping in; the answer is almost always "Ghana doesn't need that screen."
 
 ## 4. Kept from the brief without change
 

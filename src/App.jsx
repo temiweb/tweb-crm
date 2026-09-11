@@ -924,7 +924,6 @@ export default function InfinistoresCRM() {
   const cur = "₦";
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => { const c = () => setIsMobile(window.innerWidth < 768); c(); window.addEventListener("resize", c); return () => window.removeEventListener("resize", c); }, []);
-  useEffect(() => { setInvTab("products"); }, [country]); // Ghana-catalogue tab only exists in GH; reset on switch
   useEffect(() => { ordersRef.current = orders; }, [orders]);
 
   // ─── LOAD ALL DATA ───
@@ -1868,6 +1867,7 @@ export default function InfinistoresCRM() {
       ...(caps.analytics ? [{ id: "analytics", label: "Analytics", icon: LayoutDashboard }] : []),
       ...(caps.settings ? [{ id: "templates", label: "Messages", icon: MessageSquare }] : []),
     ] },
+    ...(caps.analytics ? [{ sec: "Ghana (VDL)", items: [{ id: "ghana", label: "Fulfilment", icon: Package }] }] : []),
     ...(caps.staff ? [{ sec: "People", items: [{ id: "staff", label: "Staff", icon: Users }] }] : []),
   ].filter(g => g.items.length);
   const navFlat = NAV.flatMap(g => g.items);
@@ -2096,8 +2096,6 @@ export default function InfinistoresCRM() {
     { id: "transfers", label: "Transfers" },
     { id: "buy", label: "Buy stock" },
     { id: "faulty", label: "Faulty stock" },
-    // Ghana fulfilment is VDL, not agent stock — a distinct read-only catalogue.
-    ...(country === "ghana" ? [{ id: "ghana", label: "Ghana catalogue" }] : []),
   ];
   const withAgents = name => cAgents.reduce((s, a) => s + (inventory.find(i => i.agent_id === a.id && i.product_name === name)?.qty || 0), 0);
   const agentName = id => agents.find(a => a.id === id)?.name || "—";
@@ -2208,27 +2206,6 @@ export default function InfinistoresCRM() {
         </table></div></Card>
       )}
 
-      {invTab === "ghana" && (() => {
-        const GH_LOW = 10;
-        const lastSynced = ghProducts.reduce((m, p) => (p.synced_at && (!m || p.synced_at > m) ? p.synced_at : m), null);
-        if (ghProducts.length === 0) return <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No Ghana catalogue yet</div><p style={{ marginTop: "4px" }}>Run the vdl-product-sync function to mirror VDL's products and stock.</p></Card>;
-        return <>
-          <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
-            VDL warehouse stock — read-only, mirrored from VDL Fulfilment{lastSynced ? ` · last synced ${new Date(lastSynced).toLocaleString()}` : ""}. Separate from Nigerian agent stock; VDL handles Ghana fulfilment.
-          </Card>
-          <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-            <thead><tr><th>Product</th><th>VDL code</th><th className="r">Stock available</th><th className="r">Status</th></tr></thead>
-            <tbody>{ghProducts.map(p => { const active = p.active !== false; const low = active && Number(p.quantity_available || 0) < GH_LOW; return (
-              <tr key={p.code}>
-                <td style={{ fontWeight: 600 }}>{p.name}</td>
-                <td style={{ fontSize: "12px", color: T.textMuted }}>{p.code}</td>
-                <td className="r cx-num" style={{ fontWeight: 700, color: low ? T.danger : T.text }}>{Number(p.quantity_available || 0).toLocaleString()}{low && <span style={{ fontSize: "10px", fontWeight: 700, color: T.danger, marginLeft: "6px" }}>LOW</span>}</td>
-                <td className="r"><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: active ? T.accentLight : T.surfaceAlt, color: active ? T.accent : T.textMuted }}>{active ? "Active" : "Inactive"}</span></td>
-              </tr>
-            ); })}</tbody>
-          </table></div></Card>
-        </>;
-      })()}
     </div>
   );
 
@@ -2552,7 +2529,35 @@ export default function InfinistoresCRM() {
     </div>
   );
 
-  const screen = { orders: OrdersScreen, agents: AgentsScreen, inventory: InventoryScreen, analytics: AnalyticsScreen, templates: TemplatesScreen, staff: caps.staff ? StaffScreen : OrdersScreen }[tab] || OrdersScreen;
+  // ── GHANA / VDL — its own workspace (no NG country switcher any more).
+  // Ghana delivery is handled by VDL; this is not the Nigerian agent model.
+  const GH_LOW = 10;
+  const ghLastSynced = ghProducts.reduce((m, p) => (p.synced_at && (!m || p.synced_at > m) ? p.synced_at : m), null);
+  const GhanaScreen = (
+    <div>
+      <div className="cx-head">
+        <div><h1 className="cx-h1">Ghana fulfilment</h1><div className="cx-sub">VDL Fulfilment — catalogue &amp; orders</div></div>
+      </div>
+      <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
+        VDL warehouse stock — read-only, mirrored from VDL Fulfilment{ghLastSynced ? ` · last synced ${new Date(ghLastSynced).toLocaleString()}` : ""}. Ghana delivery is handled by VDL, not Nigerian agents.
+      </Card>
+      {ghProducts.length === 0
+        ? <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No Ghana catalogue yet</div><p style={{ marginTop: "4px" }}>Run the vdl-product-sync function to mirror VDL's products and stock.</p></Card>
+        : <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+            <thead><tr><th>Product</th><th>VDL code</th><th className="r">Stock available</th><th className="r">Status</th></tr></thead>
+            <tbody>{ghProducts.map(p => { const active = p.active !== false; const low = active && Number(p.quantity_available || 0) < GH_LOW; return (
+              <tr key={p.code}>
+                <td style={{ fontWeight: 600 }}>{p.name}</td>
+                <td style={{ fontSize: "12px", color: T.textMuted }}>{p.code}</td>
+                <td className="r cx-num" style={{ fontWeight: 700, color: low ? T.danger : T.text }}>{Number(p.quantity_available || 0).toLocaleString()}{low && <span style={{ fontSize: "10px", fontWeight: 700, color: T.danger, marginLeft: "6px" }}>LOW</span>}</td>
+                <td className="r"><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: active ? T.accentLight : T.surfaceAlt, color: active ? T.accent : T.textMuted }}>{active ? "Active" : "Inactive"}</span></td>
+              </tr>
+            ); })}</tbody>
+          </table></div></Card>}
+    </div>
+  );
+
+  const screen = { orders: OrdersScreen, agents: AgentsScreen, inventory: InventoryScreen, analytics: AnalyticsScreen, templates: TemplatesScreen, staff: caps.staff ? StaffScreen : OrdersScreen, ghana: GhanaScreen }[tab] || OrdersScreen;
 
   // ═══════════════════════════════════════════════
   // MODALS (shared between layouts)
