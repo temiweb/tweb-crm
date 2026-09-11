@@ -132,7 +132,8 @@ create table public.vdl_orders (
   gh_region_name      text,           -- must match gh_regions.name exactly
   gh_package_label    text,           -- stored for display/audit only
   gh_gps_address      text,
-  gh_raw_address      text,
+  gh_raw_address      text,           -- verbatim from the form
+  gh_location         text,           -- operator-corrected landmark; sent as customer_location
   -- sync state machine
   vdl_sync_status     text not null default 'needs_review',
   vdl_sync_error      text,
