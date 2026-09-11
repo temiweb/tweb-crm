@@ -94,7 +94,6 @@ Deno.serve(async (req) => {
   const name = asStr(body.customer_name).trim();
   const rawAddress = asStr(body.address).replace(/[\r\n]+/g, ", ").trim();
   const region = asStr(body.region).trim();
-  const packageLabel = asStr(body.package_label).trim();
   const productCode = asStr(body.product_code).trim();
   const altPhone = asStr(body.alt_phone).trim();
   const notes = asStr(body.notes).trim();
@@ -104,10 +103,14 @@ Deno.serve(async (req) => {
   const phoneRaw = asStr(body.phone);
   const phone = ghPhone(phoneRaw);
 
-  // Structured values — never parsed from the label.
-  const quantity = num(body.quantity);
-  const expectedTotal = num(body.expected_total);
-  const discount = num(body.discount) ?? 0;
+  // Structured package value from the dropdown's "Show Values":
+  // "quantity|total|discount|name" (e.g. "2|300|60|Buy 2 Net Repair Tapes").
+  // The human-readable label is NEVER parsed for numbers.
+  const pkgParts = asStr(body.package).split("|").map(s => s.trim());
+  const quantity = num(pkgParts[0]);
+  const expectedTotal = num(pkgParts[1]);
+  const discount = num(pkgParts[2]) ?? 0;
+  const packageLabel = pkgParts.slice(3).join("|").trim() || asStr(body.package_label).trim();
 
   // Comment for VDL's delivery team — alt phone, notes, full raw address.
   const comment = [altPhone && `Alt: ${altPhone}`, notes, rawAddress].filter(Boolean).join("\n");
