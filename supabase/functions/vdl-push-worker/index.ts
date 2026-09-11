@@ -90,6 +90,10 @@ function json(status: number, obj: unknown): Response {
 Deno.serve(async () => {
   if (!VDL_BASE || !VDL_TOKEN) return json(400, { ok: false, error: "VDL_API_BASE_URL / VDL_API_TOKEN not set" });
 
+  // 0) Reclaim any orders orphaned in 'pushing' by a prior crashed run (>15 min).
+  await fetch(`${SUPABASE_URL}/rest/v1/vdl_orders?vdl_sync_status=eq.pushing&updated_at=lt.${new Date(Date.now() - 15 * 60000).toISOString()}`,
+    { method: "PATCH", headers: svc, body: JSON.stringify({ vdl_sync_status: "approved" }) }).catch(() => {});
+
   // 1) Claim a batch atomically.
   const claimRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/claim_vdl_push_batch`, { method: "POST", headers: svc, body: JSON.stringify({ p_limit: BATCH }) });
   if (!claimRes.ok) { const t = await claimRes.text(); await alert("error", `vdl-push-worker: claim failed ${claimRes.status}: ${t.slice(0, 150)}`); return json(502, { ok: false, error: t }); }
