@@ -44,11 +44,18 @@ supabase secrets list
 
 ## Prove alerting works (Phase 0b exit)
 
-```bash
-supabase functions deploy alert-test
-curl -X POST "$SUPABASE_URL/functions/v1/alert-test" -H "Authorization: Bearer $SUPABASE_ANON_KEY"
-# -> a "🟠 alert-test: ..." message should arrive in your Telegram chat within seconds
-supabase functions delete alert-test          # remove the throwaway once confirmed
+Quickest check, no deploy — paste in a browser (replace both values):
 ```
+https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>&text=Alerts%20working
+```
+A Telegram message means the credentials are good. Each pipeline function then
+exercises the same path on its own errors.
 
-The shared helper lives in `supabase/functions/_shared/alert.ts` and is imported by every pipeline function as `import { alert } from "../_shared/alert.ts"`.
+## Shared alert helper
+
+`supabase/functions/_shared/alert.ts` is the **reference** copy. Because functions
+are deployed by pasting a single file into the dashboard (not via the CLI, which
+would bundle `_shared`), each pipeline function carries an **inline copy** of
+`alert()` at the top so it pastes standalone. Keep the inline copies in sync with
+the reference. (Once the CLI deploy above is adopted, switch to
+`import { alert } from "../_shared/alert.ts"` and drop the inline copies.)
