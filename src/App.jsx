@@ -845,6 +845,8 @@ export default function InfinistoresCRM() {
   const [faulty, setFaulty] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [ghProducts, setGhProducts] = useState([]); // VDL catalogue mirror (read-only)
+  const [vdlOrders, setVdlOrders] = useState([]);   // Ghana order sidecar rows
+  const [ghRegions, setGhRegions] = useState([]);   // VDL's 17 regions (for the Held region fix)
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState({});
   const [loaded, setLoaded] = useState(false);
@@ -869,6 +871,9 @@ export default function InfinistoresCRM() {
 
   const [tab, setTab] = useState("orders");
   const [invTab, setInvTab] = useState("products");
+  const [ghanaTab, setGhanaTab] = useState("review");
+  const [ghSel, setGhSel] = useState(new Set());   // selected Ghana orders for bulk approve
+  const [ghDraft, setGhDraft] = useState({});      // per-order inline edits { [orderId]: {location, region, quantity, ...} }
   const [anaTab, setAnaTab] = useState("overview");
   const [showDecisionNote, setShowDecisionNote] = useState(false);
   const [showAllStatuses, setShowAllStatuses] = useState(false);
@@ -970,6 +975,8 @@ export default function InfinistoresCRM() {
         } catch { /* inventory tables not present yet */ }
         try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
         try { setGhProducts(await sb.query("gh_products", "order=name.asc") || []); } catch { /* gh_products not present yet */ }
+        try { setVdlOrders(await sb.query("vdl_orders", "order=created_at.desc") || []); } catch { /* vdl_orders not present yet */ }
+        try { setGhRegions(await sb.query("gh_regions", "order=name.asc") || []); } catch { /* gh_regions not present yet */ }
       } else {
         // Incremental: only orders changed since the cursor (gte re-includes the
         // boundary row — harmless, merged by id — so no edit is ever missed).
@@ -2532,18 +2539,123 @@ export default function InfinistoresCRM() {
   // ── GHANA / VDL — its own workspace (no NG country switcher any more).
   // Ghana delivery is handled by VDL; this is not the Nigerian agent model.
   const GH_LOW = 10;
+  const ghMoney = n => `GH₵${Number(n || 0).toLocaleString()}`;
   const ghLastSynced = ghProducts.reduce((m, p) => (p.synced_at && (!m || p.synced_at > m) ? p.synced_at : m), null);
+  const vdlByOrder = {}; vdlOrders.forEach(v => { vdlByOrder[v.order_id] = v; });
+  const ghOrders = orders.filter(o => o.country === "ghana").map(o => ({ ...o, vdl: vdlByOrder[o.id] })).filter(o => o.vdl);
+  const ghReview = ghOrders.filter(o => o.vdl.vdl_sync_status === "needs_review");
+  const ghHeld = ghOrders.filter(o => ["held", "failed", "auth_failed"].includes(o.vdl.vdl_sync_status));
+  const ghSynced = ghOrders.filter(o => ["approved", "pushing", "synced"].includes(o.vdl.vdl_sync_status));
+
+  const draftVal = (id, field, fb) => (ghDraft[id] && ghDraft[id][field] !== undefined) ? ghDraft[id][field] : fb;
+  const setDraft = (id, field, value) => setGhDraft(d => ({ ...d, [id]: { ...(d[id] || {}), [field]: value } }));
+  const toggleGhSel = id => setGhSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const doGhApprove = async (o) => {
+    const location = draftVal(o.id, "location", o.vdl.gh_location || o.address || "");
+    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, gh_location: location, vdl_sync_status: "approved" } : v));
+    try { await sb.update("vdl_orders", { order_id: o.id }, { gh_location: location, vdl_sync_status: "approved" }); showToast("Order approved for VDL", "success"); }
+    catch (err) { showToast(err.message); await loadAll(); }
+  };
+  const doGhBulkApprove = async () => {
+    const ids = [...ghSel];
+    setVdlOrders(prev => prev.map(v => ghSel.has(v.order_id) ? { ...v, vdl_sync_status: "approved" } : v));
+    setGhSel(new Set());
+    try { await Promise.all(ids.map(id => sb.update("vdl_orders", { order_id: id }, { vdl_sync_status: "approved" }))); }
+    catch (err) { showToast(err.message); await loadAll(); }
+  };
+  const doGhReReview = async (o) => {
+    const patch = {
+      gh_region_name: draftVal(o.id, "region", o.vdl.gh_region_name),
+      gh_quantity: Number(draftVal(o.id, "quantity", o.vdl.gh_quantity)) || null,
+      gh_expected_total: Number(draftVal(o.id, "total", o.vdl.gh_expected_total)) || null,
+      gh_discount_amount: Number(draftVal(o.id, "discount", o.vdl.gh_discount_amount)) || 0,
+      gh_location: draftVal(o.id, "location", o.vdl.gh_location || o.address || ""),
+      vdl_sync_status: "needs_review", vdl_sync_error: null,
+    };
+    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, ...patch } : v));
+    try { await sb.update("vdl_orders", { order_id: o.id }, patch); showToast("Sent back to review", "success"); }
+    catch (err) { showToast(err.message); await loadAll(); }
+  };
+
+  const ghSubs = [
+    { id: "review", label: `Needs review${ghReview.length ? ` (${ghReview.length})` : ""}` },
+    { id: "held", label: `Held${ghHeld.length ? ` (${ghHeld.length})` : ""}` },
+    { id: "synced", label: "Synced" },
+    { id: "catalogue", label: "Catalogue" },
+  ];
+  const ghEmpty = msg => <Card className="cx-empty"><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>{msg}</div></Card>;
+
   const GhanaScreen = (
     <div>
       <div className="cx-head">
-        <div><h1 className="cx-h1">Ghana fulfilment</h1><div className="cx-sub">VDL Fulfilment — catalogue &amp; orders</div></div>
+        <div><h1 className="cx-h1">Ghana fulfilment</h1><div className="cx-sub">VDL Fulfilment · you approve the address, VDL delivers</div></div>
       </div>
-      <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
-        VDL warehouse stock — read-only, mirrored from VDL Fulfilment{ghLastSynced ? ` · last synced ${new Date(ghLastSynced).toLocaleString()}` : ""}. Ghana delivery is handled by VDL, not Nigerian agents.
-      </Card>
-      {ghProducts.length === 0
-        ? <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No Ghana catalogue yet</div><p style={{ marginTop: "4px" }}>Run the vdl-product-sync function to mirror VDL's products and stock.</p></Card>
-        : <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+      <div className="cx-tabs">{ghSubs.map(s => <button key={s.id} className={`cx-tab ${ghanaTab === s.id ? "on" : ""}`} onClick={() => setGhanaTab(s.id)}>{s.label}</button>)}</div>
+
+      {ghanaTab === "review" && (ghReview.length === 0 ? ghEmpty("No orders awaiting review") : <>
+        {ghSel.size > 0 && <div style={{ display: "flex", gap: "8px", alignItems: "center", background: T.accentLight, padding: "10px 14px", borderRadius: T.rs, border: `1.5px solid ${T.accentMid}`, marginBottom: "12px" }}>
+          <span style={{ fontWeight: 700, color: T.accent, fontSize: "13px" }}>{ghSel.size} selected</span>
+          <Btn sz="sm" onClick={doGhBulkApprove}>Approve selected (uses current address)</Btn>
+          <Btn v="secondary" sz="sm" onClick={() => setGhSel(new Set())}>Clear</Btn>
+        </div>}
+        <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th style={{ width: "36px" }}></th><th>Customer</th><th>Package</th><th>Region</th><th>Delivery location (correct if needed)</th><th className="r">Approve</th></tr></thead>
+          <tbody>{ghReview.map(o => (
+            <tr key={o.id}>
+              <td><input type="checkbox" checked={ghSel.has(o.id)} onChange={() => toggleGhSel(o.id)} style={{ width: "15px", height: "15px", accentColor: T.accent }} /></td>
+              <td className="cx-cust"><b>{o.name}</b><span>{cleanPhone(o.phone)}</span></td>
+              <td><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.product} ×{o.vdl.gh_quantity}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{ghMoney(o.vdl.gh_expected_total)}{o.vdl.gh_discount_amount > 0 ? ` · save ${ghMoney(o.vdl.gh_discount_amount)}` : ""}</div></td>
+              <td style={{ fontSize: "12px" }}>{o.state}</td>
+              <td style={{ minWidth: "220px" }}><input value={draftVal(o.id, "location", o.vdl.gh_location || o.address || "")} onChange={e => setDraft(o.id, "location", e.target.value)} style={{ width: "100%", padding: "7px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} /></td>
+              <td className="r"><Btn sz="xs" onClick={() => doGhApprove(o)}>Approve</Btn></td>
+            </tr>
+          ))}</tbody>
+        </table></div></Card>
+      </>)}
+
+      {ghanaTab === "held" && (ghHeld.length === 0 ? ghEmpty("Nothing held — all clear") : <div style={{ display: "grid", gap: "10px" }}>
+        {ghHeld.map(o => (
+          <Card key={o.id} style={{ padding: "14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
+              <div><div style={{ fontWeight: 700 }}>{o.name} · {cleanPhone(o.phone)}</div><div style={{ fontSize: "12px", color: T.textMuted }}>{o.product} ×{o.vdl.gh_quantity} · {ghMoney(o.vdl.gh_expected_total)}</div></div>
+              <span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: T.dangerBg, color: T.danger }}>{o.vdl.vdl_sync_error || o.vdl.vdl_sync_status}</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4,1fr)", gap: "8px", marginBottom: "10px" }}>
+              <label style={{ fontSize: "11px", color: T.textMuted }}>Region
+                <select value={draftVal(o.id, "region", o.vdl.gh_region_name || "")} onChange={e => setDraft(o.id, "region", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }}>
+                  <option value="">— pick region —</option>{ghRegions.map(r => <option key={r.vdl_region_id} value={r.name}>{r.name}</option>)}
+                </select></label>
+              <label style={{ fontSize: "11px", color: T.textMuted }}>Quantity<input type="number" value={draftVal(o.id, "quantity", o.vdl.gh_quantity ?? "")} onChange={e => setDraft(o.id, "quantity", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }} /></label>
+              <label style={{ fontSize: "11px", color: T.textMuted }}>Expected total<input type="number" value={draftVal(o.id, "total", o.vdl.gh_expected_total ?? "")} onChange={e => setDraft(o.id, "total", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }} /></label>
+              <label style={{ fontSize: "11px", color: T.textMuted }}>Discount<input type="number" value={draftVal(o.id, "discount", o.vdl.gh_discount_amount ?? 0)} onChange={e => setDraft(o.id, "discount", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }} /></label>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}><Btn sz="sm" onClick={() => doGhReReview(o)}>Save &amp; send to review</Btn></div>
+          </Card>
+        ))}
+      </div>)}
+
+      {ghanaTab === "synced" && (ghSynced.length === 0 ? ghEmpty("Nothing pushed yet") :
+        <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+          <thead><tr><th>Customer</th><th>Status</th><th>Tracking</th><th className="r">Amount due</th><th className="r">Vendor due</th><th className="r">Fees</th></tr></thead>
+          <tbody>{ghSynced.map(o => (
+            <tr key={o.id}>
+              <td className="cx-cust"><b>{o.name}</b><span>{cleanPhone(o.phone)}</span></td>
+              <td><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: T.surfaceAlt, color: T.textMuted }}>{o.vdl.vdl_state_label || o.vdl.vdl_sync_status}</span></td>
+              <td style={{ fontFamily: T.f, fontSize: "12px" }}>{o.vdl.vdl_tracking_id || "—"}</td>
+              <td className="r cx-num">{o.vdl.vdl_amount_due_customer != null ? ghMoney(o.vdl.vdl_amount_due_customer) : "—"}</td>
+              <td className="r cx-num">{o.vdl.vdl_vendor_amount_due != null ? ghMoney(o.vdl.vdl_vendor_amount_due) : "—"}</td>
+              <td className="r cx-num" style={{ fontSize: "12px", color: T.textMuted }}>{o.vdl.vdl_delivery_fee != null ? ghMoney(Number(o.vdl.vdl_delivery_fee || 0) + Number(o.vdl.vdl_packaging_fee || 0)) : "—"}</td>
+            </tr>
+          ))}</tbody>
+        </table></div></Card>
+      )}
+
+      {ghanaTab === "catalogue" && <>
+        <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
+          VDL warehouse stock — read-only, mirrored from VDL{ghLastSynced ? ` · last synced ${new Date(ghLastSynced).toLocaleString()}` : ""}.
+        </Card>
+        {ghProducts.length === 0 ? ghEmpty("No catalogue yet — run vdl-product-sync") :
+          <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
             <thead><tr><th>Product</th><th>VDL code</th><th className="r">Stock available</th><th className="r">Status</th></tr></thead>
             <tbody>{ghProducts.map(p => { const active = p.active !== false; const low = active && Number(p.quantity_available || 0) < GH_LOW; return (
               <tr key={p.code}>
@@ -2554,6 +2666,7 @@ export default function InfinistoresCRM() {
               </tr>
             ); })}</tbody>
           </table></div></Card>}
+      </>}
     </div>
   );
 
