@@ -2599,6 +2599,15 @@ export default function InfinistoresCRM() {
     catch (err) { showToast(err.message); await loadAll(); }
   };
   const openGhEdit = o => setEditGhOrder({ ...o, vdl: { ...o.vdl } });
+  const doGhDelete = async (o) => {
+    const atVdl = o.vdl.vdl_tracking_id || ["synced", "pushing"].includes(o.vdl.vdl_sync_status);
+    if (!window.confirm(atVdl
+      ? "This order is already at VDL. Deleting removes it from the CRM only — it does NOT cancel the VDL delivery. Continue?"
+      : "Delete this Ghana order?")) return;
+    setOrders(prev => prev.filter(x => x.id !== o.id));       // sidecar cascades in the DB
+    setVdlOrders(prev => prev.filter(v => v.order_id !== o.id));
+    try { await sb.delete("orders", { id: o.id }); } catch (err) { showToast(err.message); await loadAll(); }
+  };
 
   const ghSubs = [
     { id: "review", label: `Needs review${ghReview.length ? ` (${ghReview.length})` : ""}` },
@@ -2636,7 +2645,7 @@ export default function InfinistoresCRM() {
                   <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${o.vdl.gh_raw_address || o.address || ""}, Ghana`)}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: "10px", color: T.accent, fontWeight: 700, whiteSpace: "nowrap", textDecoration: "none" }}>Maps ↗</a>
                 </div>
               </td>
-              <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => openGhEdit(o)}><Pencil size={13} />Edit</Btn><Btn sz="xs" onClick={() => doGhApprove(o)}>Approve</Btn></div></td>
+              <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end", alignItems: "center" }}><Btn v="secondary" sz="xs" onClick={() => openGhEdit(o)}><Pencil size={13} />Edit</Btn><Btn sz="xs" onClick={() => doGhApprove(o)}>Approve</Btn>{caps.del && <Btn v="ghost" sz="xs" onClick={() => doGhDelete(o)} style={{ color: T.danger }} aria-label="Delete order"><Trash2 size={13} /></Btn>}</div></td>
             </tr>
           ))}</tbody>
         </table></div></Card>
@@ -2658,7 +2667,7 @@ export default function InfinistoresCRM() {
               <label style={{ fontSize: "11px", color: T.textMuted }}>Expected total<input type="number" value={draftVal(o.id, "total", o.vdl.gh_expected_total ?? "")} onChange={e => setDraft(o.id, "total", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }} /></label>
               <label style={{ fontSize: "11px", color: T.textMuted }}>Discount<input type="number" value={draftVal(o.id, "discount", o.vdl.gh_discount_amount ?? 0)} onChange={e => setDraft(o.id, "discount", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }} /></label>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}><Btn v="secondary" sz="sm" onClick={() => openGhEdit(o)}><Pencil size={14} />Full edit</Btn><Btn sz="sm" onClick={() => doGhReReview(o)}>Save &amp; send to review</Btn></div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}>{caps.del && <Btn v="ghost" sz="sm" onClick={() => doGhDelete(o)} style={{ color: T.danger, marginRight: "auto" }}><Trash2 size={14} />Delete</Btn>}<Btn v="secondary" sz="sm" onClick={() => openGhEdit(o)}><Pencil size={14} />Full edit</Btn><Btn sz="sm" onClick={() => doGhReReview(o)}>Save &amp; send to review</Btn></div>
           </Card>
         ))}
       </div>)}
@@ -2674,9 +2683,12 @@ export default function InfinistoresCRM() {
               <td className="r cx-num">{o.vdl.vdl_amount_due_customer != null ? ghMoney(o.vdl.vdl_amount_due_customer) : "—"}</td>
               <td className="r cx-num">{o.vdl.vdl_vendor_amount_due != null ? ghMoney(o.vdl.vdl_vendor_amount_due) : "—"}</td>
               <td className="r cx-num" style={{ fontSize: "12px", color: T.textMuted }}>{o.vdl.vdl_delivery_fee != null ? ghMoney(Number(o.vdl.vdl_delivery_fee || 0) + Number(o.vdl.vdl_packaging_fee || 0)) : "—"}</td>
-              <td className="r">{o.vdl.vdl_sync_status === "approved"
-                ? <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => openGhEdit(o)} aria-label="Edit order"><Pencil size={13} /></Btn><Btn v="secondary" sz="xs" onClick={() => doGhRecall(o)}>Recall</Btn></div>
-                : <span style={{ fontSize: "11px", color: T.textLight }} title={o.vdl.vdl_sync_status === "synced" ? "Already at VDL — no cancel endpoint" : "Being pushed"}>{o.vdl.vdl_sync_status === "synced" ? "at VDL" : "—"}</span>}</td>
+              <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end", alignItems: "center" }}>
+                {o.vdl.vdl_sync_status === "approved"
+                  ? <><Btn v="secondary" sz="xs" onClick={() => openGhEdit(o)} aria-label="Edit order"><Pencil size={13} /></Btn><Btn v="secondary" sz="xs" onClick={() => doGhRecall(o)}>Recall</Btn></>
+                  : <span style={{ fontSize: "11px", color: T.textLight }} title={o.vdl.vdl_sync_status === "synced" ? "Already at VDL — no cancel endpoint" : "Being pushed"}>{o.vdl.vdl_sync_status === "synced" ? "at VDL" : "—"}</span>}
+                {caps.del && <Btn v="ghost" sz="xs" onClick={() => doGhDelete(o)} style={{ color: T.danger }} aria-label="Delete order"><Trash2 size={13} /></Btn>}
+              </div></td>
             </tr>
           ))}</tbody>
         </table></div></Card>
