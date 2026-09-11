@@ -874,6 +874,7 @@ export default function InfinistoresCRM() {
   const [ghanaTab, setGhanaTab] = useState("review");
   const [ghSel, setGhSel] = useState(new Set());   // selected Ghana orders for bulk approve
   const [ghDraft, setGhDraft] = useState({});      // per-order inline edits { [orderId]: {location, region, quantity, ...} }
+  const [editGhOrder, setEditGhOrder] = useState(null); // full Ghana order edit modal
   const [anaTab, setAnaTab] = useState("overview");
   const [showDecisionNote, setShowDecisionNote] = useState(false);
   const [showAllStatuses, setShowAllStatuses] = useState(false);
@@ -2576,6 +2577,28 @@ export default function InfinistoresCRM() {
     try { await sb.update("vdl_orders", { order_id: o.id }, patch); showToast("Sent back to review", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
+  // Recall an approved (not-yet-pushed) order back to review.
+  const doGhRecall = async (o) => {
+    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, vdl_sync_status: "needs_review" } : v));
+    try { await sb.update("vdl_orders", { order_id: o.id }, { vdl_sync_status: "needs_review" }); showToast("Recalled to review", "success"); }
+    catch (err) { showToast(err.message); await loadAll(); }
+  };
+  // Full edit (location, comment, package, region, contact) — status unchanged.
+  const doSaveGhOrder = async () => {
+    const o = editGhOrder;
+    const orderPatch = { name: o.name, phone: o.phone, notes: o.notes || "" };
+    const vdlPatch = {
+      gh_location: o.vdl.gh_location || "", gh_region_name: o.vdl.gh_region_name || "",
+      gh_quantity: Number(o.vdl.gh_quantity) || null, gh_expected_total: Number(o.vdl.gh_expected_total) || null,
+      gh_discount_amount: Number(o.vdl.gh_discount_amount) || 0,
+    };
+    setEditGhOrder(null);
+    setOrders(prev => prev.map(x => x.id === o.id ? { ...x, ...orderPatch } : x));
+    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, ...vdlPatch } : v));
+    try { await Promise.all([sb.update("orders", { id: o.id }, orderPatch), sb.update("vdl_orders", { order_id: o.id }, vdlPatch)]); showToast("Order updated", "success"); }
+    catch (err) { showToast(err.message); await loadAll(); }
+  };
+  const openGhEdit = o => setEditGhOrder({ ...o, vdl: { ...o.vdl } });
 
   const ghSubs = [
     { id: "review", label: `Needs review${ghReview.length ? ` (${ghReview.length})` : ""}` },
@@ -2610,10 +2633,10 @@ export default function InfinistoresCRM() {
                 <input value={draftVal(o.id, "location", o.vdl.gh_location || o.address || "")} onChange={e => setDraft(o.id, "location", e.target.value)} placeholder="Closest landmark for VDL" style={{ width: "100%", padding: "7px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "3px", alignItems: "center" }}>
                   <span title={o.vdl.gh_raw_address} style={{ fontSize: "10px", color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "170px" }}>{o.vdl.gh_raw_address}</span>
-                  <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(o.vdl.gh_raw_address || o.address || "")}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: "10px", color: T.accent, fontWeight: 700, whiteSpace: "nowrap", textDecoration: "none" }}>Maps ↗</a>
+                  <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${o.vdl.gh_raw_address || o.address || ""}, Ghana`)}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: "10px", color: T.accent, fontWeight: 700, whiteSpace: "nowrap", textDecoration: "none" }}>Maps ↗</a>
                 </div>
               </td>
-              <td className="r"><Btn sz="xs" onClick={() => doGhApprove(o)}>Approve</Btn></td>
+              <td className="r"><div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => openGhEdit(o)}><Pencil size={13} />Edit</Btn><Btn sz="xs" onClick={() => doGhApprove(o)}>Approve</Btn></div></td>
             </tr>
           ))}</tbody>
         </table></div></Card>
@@ -2635,14 +2658,14 @@ export default function InfinistoresCRM() {
               <label style={{ fontSize: "11px", color: T.textMuted }}>Expected total<input type="number" value={draftVal(o.id, "total", o.vdl.gh_expected_total ?? "")} onChange={e => setDraft(o.id, "total", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }} /></label>
               <label style={{ fontSize: "11px", color: T.textMuted }}>Discount<input type="number" value={draftVal(o.id, "discount", o.vdl.gh_discount_amount ?? 0)} onChange={e => setDraft(o.id, "discount", e.target.value)} style={{ width: "100%", padding: "8px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, marginTop: "3px" }} /></label>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}><Btn sz="sm" onClick={() => doGhReReview(o)}>Save &amp; send to review</Btn></div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}><Btn v="secondary" sz="sm" onClick={() => openGhEdit(o)}><Pencil size={14} />Full edit</Btn><Btn sz="sm" onClick={() => doGhReReview(o)}>Save &amp; send to review</Btn></div>
           </Card>
         ))}
       </div>)}
 
       {ghanaTab === "synced" && (ghSynced.length === 0 ? ghEmpty("Nothing pushed yet") :
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-          <thead><tr><th>Customer</th><th>Status</th><th>Tracking</th><th className="r">Amount due</th><th className="r">Vendor due</th><th className="r">Fees</th></tr></thead>
+          <thead><tr><th>Customer</th><th>Status</th><th>Tracking</th><th className="r">Amount due</th><th className="r">Vendor due</th><th className="r">Fees</th><th className="r">Actions</th></tr></thead>
           <tbody>{ghSynced.map(o => (
             <tr key={o.id}>
               <td className="cx-cust"><b>{o.name}</b><span>{cleanPhone(o.phone)}</span></td>
@@ -2651,6 +2674,9 @@ export default function InfinistoresCRM() {
               <td className="r cx-num">{o.vdl.vdl_amount_due_customer != null ? ghMoney(o.vdl.vdl_amount_due_customer) : "—"}</td>
               <td className="r cx-num">{o.vdl.vdl_vendor_amount_due != null ? ghMoney(o.vdl.vdl_vendor_amount_due) : "—"}</td>
               <td className="r cx-num" style={{ fontSize: "12px", color: T.textMuted }}>{o.vdl.vdl_delivery_fee != null ? ghMoney(Number(o.vdl.vdl_delivery_fee || 0) + Number(o.vdl.vdl_packaging_fee || 0)) : "—"}</td>
+              <td className="r">{o.vdl.vdl_sync_status === "approved"
+                ? <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}><Btn v="secondary" sz="xs" onClick={() => openGhEdit(o)} aria-label="Edit order"><Pencil size={13} /></Btn><Btn v="secondary" sz="xs" onClick={() => doGhRecall(o)}>Recall</Btn></div>
+                : <span style={{ fontSize: "11px", color: T.textLight }} title={o.vdl.vdl_sync_status === "synced" ? "Already at VDL — no cancel endpoint" : "Being pushed"}>{o.vdl.vdl_sync_status === "synced" ? "at VDL" : "—"}</span>}</td>
             </tr>
           ))}</tbody>
         </table></div></Card>
@@ -2836,6 +2862,27 @@ export default function InfinistoresCRM() {
 
       <Modal open={showAddStaff} onClose={() => setShowAddStaff(false)} title="Invite staff member">
         <StaffForm onSubmit={doInviteStaff} />
+      </Modal>
+
+      <Modal open={!!editGhOrder} onClose={() => setEditGhOrder(null)} title="Edit Ghana order" wide>
+        {editGhOrder && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "0 10px" }}>
+          <Inp label="Customer name" value={editGhOrder.name} onChange={e => setEditGhOrder(p => ({ ...p, name: e.target.value }))} />
+          <Inp label="Phone (+233…)" value={editGhOrder.phone} onChange={e => setEditGhOrder(p => ({ ...p, phone: e.target.value }))} />
+          <div style={{ marginBottom: "10px" }}><label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase" }}>Region</label>
+            <select value={editGhOrder.vdl.gh_region_name || ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_region_name: e.target.value } }))} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt }}>
+              <option value="">— pick region —</option>{ghRegions.map(r => <option key={r.vdl_region_id} value={r.name}>{r.name}</option>)}
+            </select></div>
+          <Inp label="Delivery location (landmark)" value={editGhOrder.vdl.gh_location || ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_location: e.target.value } }))} />
+          <Inp label="Quantity" type="number" value={editGhOrder.vdl.gh_quantity ?? ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_quantity: e.target.value } }))} />
+          <Inp label="Expected total (GH₵)" type="number" value={editGhOrder.vdl.gh_expected_total ?? ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_expected_total: e.target.value } }))} />
+          <Inp label="Discount (GH₵)" type="number" value={editGhOrder.vdl.gh_discount_amount ?? 0} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_discount_amount: e.target.value } }))} />
+          <div style={{ gridColumn: "1/-1", marginBottom: "10px" }}>
+            <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase" }}>Comment sent to VDL</label>
+            <textarea value={editGhOrder.notes || ""} onChange={e => setEditGhOrder(p => ({ ...p, notes: e.target.value }))} rows={4} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt, fontFamily: T.f, resize: "vertical", boxSizing: "border-box" }} />
+            <div style={{ fontSize: "10px", color: T.textMuted, marginTop: "3px" }}>What VDL's delivery team sees. Put the full typed address here if you only had a landmark above — or clear it if the location field already covers it.</div>
+          </div>
+          <div style={{ gridColumn: "1/-1", display: "flex", gap: "8px", marginTop: "4px" }}><Btn onClick={doSaveGhOrder} style={{ flex: 1, justifyContent: "center" }}>Save changes</Btn><Btn v="secondary" onClick={() => setEditGhOrder(null)}>Cancel</Btn></div>
+        </div>}
       </Modal>
     </>
   );
