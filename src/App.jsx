@@ -844,6 +844,7 @@ export default function InfinistoresCRM() {
   const [purchases, setPurchases] = useState([]);
   const [faulty, setFaulty] = useState([]);
   const [transfers, setTransfers] = useState([]);
+  const [ghProducts, setGhProducts] = useState([]); // VDL catalogue mirror (read-only)
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState({});
   const [loaded, setLoaded] = useState(false);
@@ -923,6 +924,7 @@ export default function InfinistoresCRM() {
   const cur = "₦";
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => { const c = () => setIsMobile(window.innerWidth < 768); c(); window.addEventListener("resize", c); return () => window.removeEventListener("resize", c); }, []);
+  useEffect(() => { setInvTab("products"); }, [country]); // Ghana-catalogue tab only exists in GH; reset on switch
   useEffect(() => { ordersRef.current = orders; }, [orders]);
 
   // ─── LOAD ALL DATA ───
@@ -968,6 +970,7 @@ export default function InfinistoresCRM() {
           setWaybills(wb || []); setPurchases(pu || []); setFaulty(fa || []); setTransfers(tr || []);
         } catch { /* inventory tables not present yet */ }
         try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
+        try { setGhProducts(await sb.query("gh_products", "order=name.asc") || []); } catch { /* gh_products not present yet */ }
       } else {
         // Incremental: only orders changed since the cursor (gte re-includes the
         // boundary row — harmless, merged by id — so no edit is ever missed).
@@ -2093,6 +2096,8 @@ export default function InfinistoresCRM() {
     { id: "transfers", label: "Transfers" },
     { id: "buy", label: "Buy stock" },
     { id: "faulty", label: "Faulty stock" },
+    // Ghana fulfilment is VDL, not agent stock — a distinct read-only catalogue.
+    ...(country === "ghana" ? [{ id: "ghana", label: "Ghana catalogue" }] : []),
   ];
   const withAgents = name => cAgents.reduce((s, a) => s + (inventory.find(i => i.agent_id === a.id && i.product_name === name)?.qty || 0), 0);
   const agentName = id => agents.find(a => a.id === id)?.name || "—";
@@ -2202,6 +2207,28 @@ export default function InfinistoresCRM() {
           ))}</tbody>
         </table></div></Card>
       )}
+
+      {invTab === "ghana" && (() => {
+        const GH_LOW = 10;
+        const lastSynced = ghProducts.reduce((m, p) => (p.synced_at && (!m || p.synced_at > m) ? p.synced_at : m), null);
+        if (ghProducts.length === 0) return <Card className="cx-empty"><Boxes size={40} /><div className="cx-section-t" style={{ color: T.text }}>No Ghana catalogue yet</div><p style={{ marginTop: "4px" }}>Run the vdl-product-sync function to mirror VDL's products and stock.</p></Card>;
+        return <>
+          <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
+            VDL warehouse stock — read-only, mirrored from VDL Fulfilment{lastSynced ? ` · last synced ${new Date(lastSynced).toLocaleString()}` : ""}. Separate from Nigerian agent stock; VDL handles Ghana fulfilment.
+          </Card>
+          <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
+            <thead><tr><th>Product</th><th>VDL code</th><th className="r">Stock available</th><th className="r">Status</th></tr></thead>
+            <tbody>{ghProducts.map(p => { const active = p.active !== false; const low = active && Number(p.quantity_available || 0) < GH_LOW; return (
+              <tr key={p.code}>
+                <td style={{ fontWeight: 600 }}>{p.name}</td>
+                <td style={{ fontSize: "12px", color: T.textMuted }}>{p.code}</td>
+                <td className="r cx-num" style={{ fontWeight: 700, color: low ? T.danger : T.text }}>{Number(p.quantity_available || 0).toLocaleString()}{low && <span style={{ fontSize: "10px", fontWeight: 700, color: T.danger, marginLeft: "6px" }}>LOW</span>}</td>
+                <td className="r"><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: active ? T.accentLight : T.surfaceAlt, color: active ? T.accent : T.textMuted }}>{active ? "Active" : "Inactive"}</span></td>
+              </tr>
+            ); })}</tbody>
+          </table></div></Card>
+        </>;
+      })()}
     </div>
   );
 
