@@ -155,8 +155,8 @@ Deno.serve(async () => {
     }
 
     if (r.status === 401) { await patch(String(v.order_id), { vdl_sync_status: "auth_failed", vdl_sync_error: "401" }); await alert("error", "🔴 VDL auth failed (401) — Ghana push loop HALTED. Refresh VDL_API_TOKEN (mint via vdl-authenticate)."); results.push({ order: v.order_id, outcome: "auth_failed_401" }); break; }
-    if (r.status >= 500) { breaker++; await backoff(v); results.push({ order: v.order_id, outcome: "vdl_5xx", status: r.status, body: text.slice(0, 200) }); if (breaker >= 3) { await alert("error", "VDL returning 5xx repeatedly — pausing the Ghana push loop this run."); break; } continue; }
-    if (!r.ok) { await patch(String(v.order_id), { vdl_sync_status: "failed", vdl_sync_error: `${r.status}: ${text.slice(0, 200)}` }); await alert("error", `Ghana push failed (${r.status}) for ${name}: ${text.slice(0, 150)}`); results.push({ order: v.order_id, outcome: "vdl_4xx", status: r.status, body: text.slice(0, 200) }); continue; }
+    if (r.status >= 500) { breaker++; await backoff(v); results.push({ order: v.order_id, outcome: "vdl_5xx", status: r.status, body: text.slice(0, 200), sent: reqBody }); if (breaker >= 3) { await alert("error", "VDL returning 5xx repeatedly — pausing the Ghana push loop this run."); break; } continue; }
+    if (!r.ok) { await patch(String(v.order_id), { vdl_sync_status: "failed", vdl_sync_error: `${r.status}: ${text.slice(0, 200)}` }); await alert("error", `Ghana push failed (${r.status}) for ${name}: ${text.slice(0, 150)}`); results.push({ order: v.order_id, outcome: "vdl_4xx", status: r.status, body: text.slice(0, 200), sent: reqBody }); continue; }
 
     breaker = 0;
     let data: Record<string, unknown> = {}; try { data = JSON.parse(text); } catch { /* */ }
