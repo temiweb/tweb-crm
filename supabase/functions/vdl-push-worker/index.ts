@@ -119,11 +119,11 @@ Deno.serve(async () => {
 
     // Preflight guards.
     const rid = regionId[String(v.gh_region_name ?? "").trim().toLowerCase()];
-    if (!rid) { await hold(v, "unknown_region", name); continue; }
+    if (!rid) { await hold(v, "unknown_region", name); results.push({ order: v.order_id, outcome: "held", error: "unknown_region", region: v.gh_region_name }); continue; }
     const p = prod[String(v.gh_product_code ?? "")];
-    if (!p || !p.active) { await hold(v, "unknown_product", name); continue; }
-    if (v.gh_quantity == null || v.gh_expected_total == null) { await hold(v, "missing_structured_fields", name); continue; }
-    if (p.qty < (v.gh_quantity as number)) { await hold(v, "insufficient_stock", name); continue; }
+    if (!p || !p.active) { await hold(v, "unknown_product", name); results.push({ order: v.order_id, outcome: "held", error: "unknown_product", code: v.gh_product_code }); continue; }
+    if (v.gh_quantity == null || v.gh_expected_total == null) { await hold(v, "missing_structured_fields", name); results.push({ order: v.order_id, outcome: "held", error: "missing_structured_fields" }); continue; }
+    if (p.qty < (v.gh_quantity as number)) { await hold(v, "insufficient_stock", name); results.push({ order: v.order_id, outcome: "held", error: "insufficient_stock", have: p.qty, need: v.gh_quantity }); continue; }
 
     // Timeout dedup: a prior attempt may have created the order despite a timeout.
     if (((v.vdl_sync_attempts as number) || 0) > 0 && !v.vdl_tracking_id && phone) {
@@ -154,9 +154,9 @@ Deno.serve(async () => {
       await backoff(v); results.push({ order: v.order_id, outcome: "timeout_backoff" }); continue; // never blind-retry a timeout
     }
 
-    if (r.status === 401) { await patch(String(v.order_id), { vdl_sync_status: "auth_failed", vdl_sync_error: "401" }); await alert("error", "🔴 VDL auth failed (401) — Ghana push loop HALTED. Refresh VDL_API_TOKEN (mint via vdl-authenticate)."); break; }
-    if (r.status >= 500) { breaker++; await backoff(v); if (breaker >= 3) { await alert("error", "VDL returning 5xx repeatedly — pausing the Ghana push loop this run."); break; } continue; }
-    if (!r.ok) { await patch(String(v.order_id), { vdl_sync_status: "failed", vdl_sync_error: `${r.status}: ${text.slice(0, 200)}` }); await alert("error", `Ghana push failed (${r.status}) for ${name}: ${text.slice(0, 150)}`); continue; }
+    if (r.status === 401) { await patch(String(v.order_id), { vdl_sync_status: "auth_failed", vdl_sync_error: "401" }); await alert("error", "🔴 VDL auth failed (401) — Ghana push loop HALTED. Refresh VDL_API_TOKEN (mint via vdl-authenticate)."); results.push({ order: v.order_id, outcome: "auth_failed_401" }); break; }
+    if (r.status >= 500) { breaker++; await backoff(v); results.push({ order: v.order_id, outcome: "vdl_5xx", status: r.status, body: text.slice(0, 200) }); if (breaker >= 3) { await alert("error", "VDL returning 5xx repeatedly — pausing the Ghana push loop this run."); break; } continue; }
+    if (!r.ok) { await patch(String(v.order_id), { vdl_sync_status: "failed", vdl_sync_error: `${r.status}: ${text.slice(0, 200)}` }); await alert("error", `Ghana push failed (${r.status}) for ${name}: ${text.slice(0, 150)}`); results.push({ order: v.order_id, outcome: "vdl_4xx", status: r.status, body: text.slice(0, 200) }); continue; }
 
     breaker = 0;
     let data: Record<string, unknown> = {}; try { data = JSON.parse(text); } catch { /* */ }
@@ -173,5 +173,6 @@ Deno.serve(async () => {
     await new Promise(res => setTimeout(res, 1000)); // serialise — rate limits unknown
   }
 
-  return json(200, { ok: true, pushed: results.length, results });
+  const pushed = results.filter((x) => (x as Record<string, unknown>).tracking).length;
+  return json(200, { ok: true, claimed: claimed.length, pushed, outcomes: results });
 });
