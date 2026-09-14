@@ -2775,16 +2775,25 @@ export default function InfinistoresCRM() {
 
       {ghanaTab === "catalogue" && <>
         <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
-          VDL warehouse stock — read-only, mirrored from VDL{ghLastSynced ? ` · last synced ${new Date(ghLastSynced).toLocaleString()}` : ""}.
+          <b style={{ color: T.text }}>Available</b> = free to sell now · <b style={{ color: T.text }}>In-flight</b> = units out on active orders (Packaged → Delivery Completed) · <b style={{ color: T.text }}>Actual in country</b> = your true physical stock (available + in-flight). Catalogue synced from VDL{ghLastSynced ? ` ${new Date(ghLastSynced).toLocaleString()}` : ""}; in-flight reconciled daily.
         </Card>
         {ghProducts.length === 0 ? ghEmpty("No catalogue yet — run vdl-product-sync") :
           <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
-            <thead><tr><th>Product</th><th>VDL code</th><th className="r">Stock available</th><th className="r">Status</th></tr></thead>
-            <tbody>{ghProducts.map(p => { const active = p.active !== false; const low = active && Number(p.quantity_available || 0) < GH_LOW; return (
+            <thead><tr><th>Product</th><th>VDL code</th><th className="r">Available</th><th className="r">In-flight</th><th className="r">Actual in country</th><th className="r">Status</th></tr></thead>
+            <tbody>{ghProducts.map(p => {
+              const active = p.active !== false;
+              const avail = Number(p.quantity_available || 0);
+              const reconciled = p.in_flight_units != null;
+              const inFlight = Number(p.in_flight_units || 0);
+              const actual = avail + inFlight;
+              const low = active && actual < GH_LOW; // "low" now reflects true stock, not just sellable
+              return (
               <tr key={p.code}>
                 <td style={{ fontWeight: 600 }}>{p.name}</td>
                 <td style={{ fontSize: "12px", color: T.textMuted }}>{p.code}</td>
-                <td className="r cx-num" style={{ fontWeight: 700, color: low ? T.danger : T.text }}>{Number(p.quantity_available || 0).toLocaleString()}{low && <span style={{ fontSize: "10px", fontWeight: 700, color: T.danger, marginLeft: "6px" }}>LOW</span>}</td>
+                <td className="r cx-num" style={{ color: avail === 0 ? T.textMuted : T.text }}>{avail.toLocaleString()}</td>
+                <td className="r cx-num" style={{ color: T.textMuted }}>{reconciled ? inFlight.toLocaleString() : "—"}</td>
+                <td className="r cx-num" style={{ fontWeight: 800, color: low ? T.danger : T.text }}>{actual.toLocaleString()}{low && <span style={{ fontSize: "10px", fontWeight: 700, color: T.danger, marginLeft: "6px" }}>LOW</span>}</td>
                 <td className="r"><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: active ? T.accentLight : T.surfaceAlt, color: active ? T.accent : T.textMuted }}>{active ? "Active" : "Inactive"}</span></td>
               </tr>
             ); })}</tbody>
