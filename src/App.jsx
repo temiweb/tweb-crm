@@ -463,7 +463,7 @@ function AddressAutocomplete({ value, onChange, placeholder, style, country = "g
         });
         setSugs((suggestions || []).slice(0, 6));
         if (inputRef.current) setRect(inputRef.current.getBoundingClientRect());
-      } catch { setSugs([]); }
+      } catch (e) { console.warn("[gh-autocomplete]", e?.message || e); setSugs([]); }
     }, 300);
   };
 
