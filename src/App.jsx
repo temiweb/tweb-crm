@@ -408,6 +408,47 @@ function downloadCSV(filename, csv) {
   URL.revokeObjectURL(url);
 }
 
+// ── Google Places Autocomplete (Ghana address correction) ──
+// Loads the Maps JS lazily, once, only if VITE_GOOGLE_MAPS_KEY is set.
+// With no key it degrades to a plain input, so nothing breaks without it.
+const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY;
+let __gmapsPromise = null;
+function loadGoogleMaps() {
+  if (!GMAPS_KEY) return Promise.reject(new Error("no-key"));
+  if (window.google?.maps?.places) return Promise.resolve(window.google.maps);
+  if (__gmapsPromise) return __gmapsPromise;
+  __gmapsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GMAPS_KEY)}&libraries=places&loading=async`;
+    s.async = true; s.defer = true;
+    s.onload = () => resolve(window.google?.maps);
+    s.onerror = () => reject(new Error("gmaps-load-failed"));
+    document.head.appendChild(s);
+  });
+  return __gmapsPromise;
+}
+
+// Text input with Ghana-restricted place autocomplete. Falls back to a plain
+// input when no key is configured (or Maps fails to load).
+function AddressAutocomplete({ value, onChange, placeholder, style, country = "gh" }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!GMAPS_KEY || !ref.current) return;
+    let ac = null, cancelled = false;
+    loadGoogleMaps().then(maps => {
+      if (cancelled || !maps?.places || !ref.current) return;
+      ac = new maps.places.Autocomplete(ref.current, { componentRestrictions: { country }, fields: ["name", "formatted_address"] });
+      ac.addListener("place_changed", () => {
+        const p = ac.getPlace(); const name = p?.name, addr = p?.formatted_address;
+        const text = name && addr && !addr.toLowerCase().startsWith(name.toLowerCase()) ? `${name}, ${addr}` : (addr || name || (ref.current ? ref.current.value : ""));
+        onChange(text);
+      });
+    }).catch(() => { /* no key / blocked — stays a plain input */ });
+    return () => { cancelled = true; if (ac && window.google?.maps?.event) window.google.maps.event.clearInstanceListeners(ac); };
+  }, []);
+  return <input ref={ref} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} autoComplete="off" style={style} />;
+}
+
 // ═══════════════════════════════════════════════
 // DESIGN-SYSTEM CSS (v2) — scoped under .cx-app
 // ═══════════════════════════════════════════════
@@ -2639,7 +2680,7 @@ export default function InfinistoresCRM() {
               <td><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.product} ×{o.vdl.gh_quantity}</div><div style={{ fontSize: "11px", color: T.textMuted }}>{ghMoney(o.vdl.gh_expected_total)}{o.vdl.gh_discount_amount > 0 ? ` · save ${ghMoney(o.vdl.gh_discount_amount)}` : ""}</div></td>
               <td style={{ fontSize: "12px" }}>{o.state}</td>
               <td style={{ minWidth: "240px" }}>
-                <input value={draftVal(o.id, "location", o.vdl.gh_location || o.address || "")} onChange={e => setDraft(o.id, "location", e.target.value)} placeholder="Closest landmark for VDL" style={{ width: "100%", padding: "7px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
+                <AddressAutocomplete value={draftVal(o.id, "location", o.vdl.gh_location || o.address || "")} onChange={v => setDraft(o.id, "location", v)} placeholder="Closest landmark for VDL" style={{ width: "100%", padding: "7px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface, boxSizing: "border-box" }} />
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "3px", alignItems: "center" }}>
                   <span title={o.vdl.gh_raw_address} style={{ fontSize: "10px", color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "170px" }}>{o.vdl.gh_raw_address}</span>
                   <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${o.vdl.gh_raw_address || o.address || ""}, Ghana`)}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: "10px", color: T.accent, fontWeight: 700, whiteSpace: "nowrap", textDecoration: "none" }}>Maps ↗</a>
@@ -2884,7 +2925,10 @@ export default function InfinistoresCRM() {
             <select value={editGhOrder.vdl.gh_region_name || ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_region_name: e.target.value } }))} style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt }}>
               <option value="">— pick region —</option>{ghRegions.map(r => <option key={r.vdl_region_id} value={r.name}>{r.name}</option>)}
             </select></div>
-          <Inp label="Delivery location (landmark)" value={editGhOrder.vdl.gh_location || ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_location: e.target.value } }))} />
+          <div style={{ marginBottom: "10px" }}>
+            <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "4px", textTransform: "uppercase" }}>Delivery location (landmark)</label>
+            <AddressAutocomplete value={editGhOrder.vdl.gh_location || ""} onChange={v => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_location: v } }))} placeholder="Start typing a Ghana place…" style={{ width: "100%", padding: "10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "13px", background: T.surfaceAlt, boxSizing: "border-box" }} />
+          </div>
           <Inp label="Quantity" type="number" value={editGhOrder.vdl.gh_quantity ?? ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_quantity: e.target.value } }))} />
           <Inp label="Expected total (GH₵)" type="number" value={editGhOrder.vdl.gh_expected_total ?? ""} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_expected_total: e.target.value } }))} />
           <Inp label="Discount (GH₵)" type="number" value={editGhOrder.vdl.gh_discount_amount ?? 0} onChange={e => setEditGhOrder(p => ({ ...p, vdl: { ...p.vdl, gh_discount_amount: e.target.value } }))} />
