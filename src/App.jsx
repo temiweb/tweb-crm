@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { cleanPhone, parsePackage, waLink } from "./lib/order-utils";
 import {
   LayoutDashboard, ClipboardList, Boxes, Truck, MessageSquare,
@@ -476,11 +477,13 @@ function AddressAutocomplete({ value, onChange, placeholder, style, country = "g
 
   return <>
     <input ref={inputRef} value={value} placeholder={placeholder} autoComplete="off" style={style}
+      onFocus={() => runQuery(value)}
       onChange={e => { onChange(e.target.value); runQuery(e.target.value); }}
       onBlur={() => setTimeout(() => setSugs([]), 150)} />
-    {sugs.length > 0 && rect && <div style={{ position: "fixed", zIndex: 9999, top: rect.bottom + 2, left: rect.left, width: rect.width, background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rs, boxShadow: T.shl, maxHeight: "220px", overflowY: "auto" }}>
-      {sugs.map((s, i) => <div key={i} onMouseDown={() => pick(s)} style={{ padding: "8px 10px", fontSize: "12px", cursor: "pointer", color: T.text, borderTop: i ? `1px solid ${T.borderLight}` : "none" }}>{s?.placePrediction?.text?.text}</div>)}
-    </div>}
+    {sugs.length > 0 && rect && createPortal(
+      <div style={{ position: "fixed", zIndex: 99999, top: rect.bottom + 2, left: rect.left, width: rect.width, background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rs, boxShadow: T.shl, maxHeight: "220px", overflowY: "auto" }}>
+        {sugs.map((s, i) => <div key={i} onMouseDown={() => pick(s)} style={{ padding: "8px 10px", fontSize: "12px", cursor: "pointer", color: T.text, borderTop: i ? `1px solid ${T.borderLight}` : "none" }}>{s?.placePrediction?.text?.text}</div>)}
+      </div>, document.body)}
   </>;
 }
 
