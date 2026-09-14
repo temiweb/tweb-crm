@@ -81,16 +81,18 @@ Deno.serve(async () => {
       if (!next || rows.length === 0 || oldestOnPage < cutoff) break; // in-flight orders are recent
     }
 
-    // Write in_flight for every catalogue product (0 where none), stamp the run.
+    // Update in_flight for every catalogue product (0 where none). Use PATCH
+    // (not upsert) so we only touch existing rows and never the NOT NULL name.
     const prods: { code: string }[] = await (await fetch(`${SUPABASE_URL}/rest/v1/gh_products?select=code`, { headers: svc })).json();
     const now = new Date().toISOString();
-    const rows = prods.map(p => ({ code: p.code, in_flight_units: inFlight[p.code] || 0, stock_reconciled_at: now }));
-    if (rows.length) {
-      const up = await fetch(`${SUPABASE_URL}/rest/v1/gh_products?on_conflict=code`, {
-        method: "POST", headers: { ...svc, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(rows),
-      });
-      if (!up.ok) throw new Error(`gh_products update ${up.status}: ${(await up.text()).slice(0, 200)}`);
-    }
+    const results = await Promise.all(prods.map(p =>
+      fetch(`${SUPABASE_URL}/rest/v1/gh_products?code=eq.${encodeURIComponent(p.code)}`, {
+        method: "PATCH", headers: { ...svc, Prefer: "return=minimal" },
+        body: JSON.stringify({ in_flight_units: inFlight[p.code] || 0, stock_reconciled_at: now }),
+      })
+    ));
+    const failed = results.find(r => !r.ok);
+    if (failed) throw new Error(`gh_products update ${failed.status}: ${(await failed.text()).slice(0, 200)}`);
 
     return json(200, { ok: true, scanned, in_flight_units_total: counted, by_code: inFlight });
   } catch (e) {
