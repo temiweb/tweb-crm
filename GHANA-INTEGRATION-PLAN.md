@@ -51,11 +51,11 @@ Added from the third-party review:
 Each phase runs several days before the next; the userscript stays installed throughout.
 
 - **Phase 0 — Foundations the brief assumed existed.**
-  (0a) Adopt `supabase functions deploy`; migrate `wpforms-intake`, confirm deployed==repo. (0b) Telegram `alert()` helper + secrets, tested end-to-end. (0c) Resolve VDL unknowns with live calls: discount per-unit/line (§3.2), status list (§3.3), cancel/return charges (§3.6), timeout lookup (§6.4), GPS-on-create (§3.5), fee arithmetic (§3.4). Record in README. *No push code until these are settled.*
+  (0a) Adopt `supabase functions deploy`; migrate `wpforms-intake`, confirm deployed==repo. (0b) Telegram `alert()` helper + secrets, tested end-to-end. (0c) Resolve VDL unknowns with live calls: discount per-unit/line (§3.2), status list (§3.3), cancel/return charges (§3.6), timeout lookup (§6.4), fee arithmetic (§3.4). Record in README. *No push code until these are settled.*
 - **Phase 1 — Schema + catalogue (read-only).**
   Migration `0016`: `gh_regions` (seed 17), `gh_products` (mirror), sidecar `vdl_orders`. `vdl-product-sync` run manually→daily; surface `quantity_available` as a distinct read-only panel; low-stock alert. *Exit: products + stock visible.*
 - **Phase 2 — Intake + Ready-to-Push view (NO pushing).**
-  Ghana forms get structured hidden fields (code, qty, expected total, discount) + optional GPS; keep Product Name for userscript fallback. `order-intake-gh` reads structured fields directly, idempotent, inserts `orders`(country=ghana) + `vdl_orders`(needs_review). Ready-to-Push view: Needs review / Held / Synced, editable location, Approve (+bulk), in-app Held badge. *Exit: every Ghana order in the CRM with correct fields, 3 straight days. Standalone value even if the rest is abandoned.*
+  Ghana forms get structured hidden fields (code, qty, expected total, discount); keep Product Name for userscript fallback. `order-intake-gh` reads structured fields directly, idempotent, inserts `orders`(country=ghana) + `vdl_orders`(needs_review). Ready-to-Push view: Needs review / Held / Synced, editable location, Approve (+bulk), in-app Held badge. *Exit: every Ghana order in the CRM with correct fields, 3 straight days. Standalone value even if the rest is abandoned.*
 - **Phase 3 — Push worker (manual approval, one at a time).**
   `vdl-push-worker`: atomic claim (`for update skip locked`, mark `pushing` in a short txn, commit, *then* call VDL — never hold the txn across the HTTP call), four preflight guards, body from structured fields, serialized. Post-call: financials → sidecar; price guard → alert; 401 → auth_failed+halt+alert; other 4xx → failed; 5xx/timeout → backoff + global circuit breaker; timeout → search-by-phone dedup first. Watchdog: alert on any order `approved` > 30 min. *Exit: 10 orders pushed, every amount matches expected, zero duplicates.*
 - **Phase 4 — Full volume.** Userscript retired (not uninstalled). *Exit: 1 week clean.*
@@ -66,7 +66,7 @@ Each phase runs several days before the next; the userscript stays installed thr
 
 ## 6. Open blockers (must be answered before Phase 3)
 
-From the brief's §3, unchanged and still required: discount per-unit vs per-line (§3.2 — mischarges every multi-unit order if wrong); full order-state list (§3.3); fee arithmetic under `products_include_delivery` (§3.4); GPS-on-create (§3.5); failed/returned orders still charged? (§3.6); one controlled live order before enabling auto-push.
+From the brief's §3, unchanged and still required: discount per-unit vs per-line (§3.2 — mischarges every multi-unit order if wrong); full order-state list (§3.3); fee arithmetic under `products_include_delivery` (§3.4); failed/returned orders still charged? (§3.6); one controlled live order before enabling auto-push.
 
 ---
 

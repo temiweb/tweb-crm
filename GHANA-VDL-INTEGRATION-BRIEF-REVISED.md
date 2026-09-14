@@ -105,7 +105,6 @@ No webhooks (poll only). No `updated_since`/status filter on `/orders` (poll per
 - **3.2 `discount_amount` per-unit vs per-line — BLOCKER.** Test `code:"5Mnrt"`, `quantity:2`, `discount_amount:60`. `amount_due_customer 300.00` → per-line (send parsed figure unchanged). `240.00` → per-unit (divide by quantity; set `VDL_DISCOUNT_PER_UNIT=true`). *No auto-push until settled — a wrong answer silently mischarges every multi-unit order.*
 - **3.3 Full state list.** Log every `model_state.{id,label}`; until known, unrecognised → `unknown` (surfaces in review, never defaults).
 - **3.4 Fee arithmetic under `products_include_delivery`** (vendor account has it ON). Verify `amount_due_customer` == advertised price; confirm whether `packaging_fee` is deducted from `vendor_amount_due` or billed separately.
-- **3.5 Does create accept `ghana_post_gps`?** Send on a test; if ignored, append GPS to `comment`.
 - **3.6 Are failed/returned orders still charged `delivery_fee`?** Determines Ghana CPA ceiling.
 
 ---
@@ -131,7 +130,6 @@ create table public.vdl_orders (
   gh_discount_amount  numeric(10,2),
   gh_region_name      text,           -- must match gh_regions.name exactly
   gh_package_label    text,           -- stored for display/audit only
-  gh_gps_address      text,
   gh_raw_address      text,           -- verbatim from the form
   gh_location         text,           -- operator-corrected landmark; sent as customer_location
   -- sync state machine
@@ -177,7 +175,7 @@ Reuse the existing `orders` columns for name/phone/address/`state`(=region)/prod
 WPForms custom header `x-intake-secret` compared constant-time to `GH_INTAKE_SECRET`. Mismatch → log-and-discard `401`.
 
 ### 5.2 Payload (map via smart tags; names are the contract)
-`entry_id` (req), `customer_name` (req), `phone` (req), `alt_phone`, `address` (req, multiline), `region` (req), `product_code` (req — hidden), **`quantity` (req — hidden), `expected_total` (req — hidden), `discount` (hidden, default 0)**, `package_label` (display/audit), `gps_address`, `notes`, `page_url`/`utm_*`.
+`entry_id` (req), `customer_name` (req), `phone` (req), `alt_phone`, `address` (req, multiline), `region` (req), `product_code` (req — hidden), **`quantity` (req — hidden), `expected_total` (req — hidden), `discount` (hidden, default 0)**, `package_label` (display/audit), `notes`, `page_url`/`utm_*`.
 
 ### 5.3 Processing
 1. Verify secret.
@@ -260,9 +258,8 @@ Settings → Webhooks: Request URL = `order-intake-gh`; POST/JSON; header `x-int
 Form fields:
 1. Hidden **Product Code** (`TMDGLAS`/`5Mnrt`/`HDMT`/`CSRT`) — required.
 2. Hidden **Quantity**, **Expected Total**, **Discount** — structured values (WPForms "Show Values" / hidden fields), required (discount defaults 0). *These replace label parsing.*
-3. Optional **Ghana Post GPS** (placeholder `GD-128-5255`).
-4. Region dropdown options must equal `gh_regions.name` exactly (incl. `Greater Accra (Tema)`).
-5. Keep the existing hidden **Product Name** field for the userscript fallback.
+3. Region dropdown options must equal `gh_regions.name` exactly (incl. `Greater Accra (Tema)`).
+4. Keep the existing hidden **Product Name** field for the userscript fallback.
 
 ---
 

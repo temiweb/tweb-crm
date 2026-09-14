@@ -17,7 +17,8 @@
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const VDL_BASE = (Deno.env.get("VDL_API_BASE_URL") ?? "").trim().replace(/\/+$/, "");
-const VDL_TOKEN = (Deno.env.get("VDL_API_TOKEN") ?? "").trim().replace(/^Bearer\s+/i, "");
+const VDL_TOKEN = (Deno.env.get("VDL_API_TOKEN") ?? "")
+  .trim().replace(/^Bearer\s+/i, "").replace(/["']/g, "").replace(/\s+/g, "");
 const DISCOUNT_PER_UNIT = (Deno.env.get("VDL_DISCOUNT_PER_UNIT") ?? "false").toLowerCase() === "true";
 const BATCH = parseInt(Deno.env.get("VDL_PUSH_BATCH") ?? "3", 10);
 const BACKOFF_MIN = [2, 8, 30, 120, 480];
@@ -143,7 +144,6 @@ Deno.serve(async () => {
       region_id: rid,
       products: [{ code: v.gh_product_code, quantity: qty, discount_amount: discount }],
     };
-    if (v.gh_gps_address) reqBody.ghana_post_gps = v.gh_gps_address; // §3.5 — see if VDL echoes it
 
     let r: Response, text: string;
     try {

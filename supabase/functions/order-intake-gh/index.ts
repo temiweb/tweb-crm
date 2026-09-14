@@ -97,20 +97,16 @@ Deno.serve(async (req) => {
   const productCode = asStr(body.product_code).trim();
   const altPhone = asStr(body.alt_phone).trim();
   const notes = asStr(body.notes).trim();
-  const gps = asStr(body.gps_address).trim();
 
   // Phone → +233 (bad phone still inserts, but held).
   const phoneRaw = asStr(body.phone);
   const phone = ghPhone(phoneRaw);
 
-  // Structured package value from the dropdown's "Show Values":
-  // "quantity|total|discount|name" (e.g. "2|300|60|Buy 2 Net Repair Tapes").
-  // The human-readable label is NEVER parsed for numbers.
   const pkgParts = asStr(body.package).split("|").map(s => s.trim());
-  const quantity = num(pkgParts[0]);
-  const expectedTotal = num(pkgParts[1]);
-  const discount = num(pkgParts[2]) ?? 0;
-  const packageLabel = pkgParts.slice(3).join("|").trim() || asStr(body.package_label).trim();
+  const quantity = num(body.quantity) ?? num(pkgParts[0]);
+  const expectedTotal = num(body.expected_total) ?? num(pkgParts[1]);
+  const discount = num(body.discount) ?? num(pkgParts[2]) ?? 0;
+  const packageLabel = asStr(body.package_label).trim() || pkgParts.slice(3).join("|").trim();
 
   // Comment for VDL's delivery team — alt phone, notes, full raw address.
   const comment = [altPhone && `Alt: ${altPhone}`, notes, rawAddress].filter(Boolean).join("\n");
@@ -153,7 +149,7 @@ Deno.serve(async (req) => {
     order_id: orderId, wpforms_entry_id: entryId,
     gh_product_code: productCode, gh_quantity: quantity, gh_expected_total: expectedTotal,
     gh_discount_amount: discount, gh_region_name: region, gh_package_label: packageLabel,
-    gh_gps_address: gps || null, gh_raw_address: rawAddress, gh_location: rawAddress,
+    gh_raw_address: rawAddress, gh_location: rawAddress,
     vdl_sync_status: syncStatus, vdl_sync_error: syncError,
   };
   const sRes = await fetch(`${SUPABASE_URL}/rest/v1/vdl_orders`, { method: "POST", headers: svc, body: JSON.stringify([sidecar]) });
