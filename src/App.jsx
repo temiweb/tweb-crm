@@ -428,25 +428,60 @@ function loadGoogleMaps() {
   return __gmapsPromise;
 }
 
-// Text input with Ghana-restricted place autocomplete. Falls back to a plain
-// input when no key is configured (or Maps fails to load).
+// Text input with Ghana-restricted place autocomplete, using the current
+// Places "AutocompleteSuggestion" data API (the classic Autocomplete widget
+// is blocked for new Google customers). Keeps our own controlled input and
+// renders a custom dropdown positioned fixed (so a table row can't clip it).
+// Degrades to a plain input when no key is set or Maps fails to load.
 function AddressAutocomplete({ value, onChange, placeholder, style, country = "gh" }) {
-  const ref = useRef(null);
+  const inputRef = useRef(null);
+  const libRef = useRef(null);
+  const tokenRef = useRef(null);
+  const debRef = useRef(null);
+  const [sugs, setSugs] = useState([]);
+  const [rect, setRect] = useState(null);
+
   useEffect(() => {
-    if (!GMAPS_KEY || !ref.current) return;
-    let ac = null, cancelled = false;
-    loadGoogleMaps().then(maps => {
-      if (cancelled || !maps?.places || !ref.current) return;
-      ac = new maps.places.Autocomplete(ref.current, { componentRestrictions: { country }, fields: ["name", "formatted_address"] });
-      ac.addListener("place_changed", () => {
-        const p = ac.getPlace(); const name = p?.name, addr = p?.formatted_address;
-        const text = name && addr && !addr.toLowerCase().startsWith(name.toLowerCase()) ? `${name}, ${addr}` : (addr || name || (ref.current ? ref.current.value : ""));
-        onChange(text);
-      });
+    if (!GMAPS_KEY) return;
+    let cancelled = false;
+    loadGoogleMaps().then(async () => {
+      const places = await window.google.maps.importLibrary("places");
+      if (cancelled) return;
+      libRef.current = places;
+      tokenRef.current = new places.AutocompleteSessionToken();
     }).catch(() => { /* no key / blocked — stays a plain input */ });
-    return () => { cancelled = true; if (ac && window.google?.maps?.event) window.google.maps.event.clearInstanceListeners(ac); };
+    return () => { cancelled = true; clearTimeout(debRef.current); };
   }, []);
-  return <input ref={ref} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} autoComplete="off" style={style} />;
+
+  const runQuery = (text) => {
+    if (!libRef.current?.AutocompleteSuggestion || !text || text.trim().length < 3) { setSugs([]); return; }
+    clearTimeout(debRef.current);
+    debRef.current = setTimeout(async () => {
+      try {
+        const { suggestions } = await libRef.current.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+          input: text, includedRegionCodes: [country], sessionToken: tokenRef.current,
+        });
+        setSugs((suggestions || []).slice(0, 6));
+        if (inputRef.current) setRect(inputRef.current.getBoundingClientRect());
+      } catch { setSugs([]); }
+    }, 300);
+  };
+
+  const pick = (s) => {
+    const text = s?.placePrediction?.text?.text || "";
+    if (text) onChange(text);
+    setSugs([]);
+    if (libRef.current) tokenRef.current = new libRef.current.AutocompleteSessionToken(); // fresh billing session
+  };
+
+  return <>
+    <input ref={inputRef} value={value} placeholder={placeholder} autoComplete="off" style={style}
+      onChange={e => { onChange(e.target.value); runQuery(e.target.value); }}
+      onBlur={() => setTimeout(() => setSugs([]), 150)} />
+    {sugs.length > 0 && rect && <div style={{ position: "fixed", zIndex: 9999, top: rect.bottom + 2, left: rect.left, width: rect.width, background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rs, boxShadow: T.shl, maxHeight: "220px", overflowY: "auto" }}>
+      {sugs.map((s, i) => <div key={i} onMouseDown={() => pick(s)} style={{ padding: "8px 10px", fontSize: "12px", cursor: "pointer", color: T.text, borderTop: i ? `1px solid ${T.borderLight}` : "none" }}>{s?.placePrediction?.text?.text}</div>)}
+    </div>}
+  </>;
 }
 
 // ═══════════════════════════════════════════════
