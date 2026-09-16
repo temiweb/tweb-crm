@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { cleanPhone, parsePackage, waLink } from "./lib/order-utils";
 import {
@@ -2806,7 +2806,7 @@ export default function InfinistoresCRM() {
               const atRisk = split.some(([, , tone]) => tone); // any issue/return/unremitted units
               const open = !!ghStockOpen[p.code];
               return (
-              <React.Fragment key={p.code}>
+              <Fragment key={p.code}>
               <tr>
                 <td style={{ fontWeight: 600 }}>{p.name}</td>
                 <td style={{ fontSize: "12px", color: T.textMuted }}>{p.code}</td>
@@ -2834,7 +2834,7 @@ export default function InfinistoresCRM() {
                   </div>
                 </td>
               </tr>}
-              </React.Fragment>
+              </Fragment>
             ); })}</tbody>
           </table></div></Card>}
       </>}
