@@ -978,6 +978,7 @@ export default function InfinistoresCRM() {
   const [stateSort, setStateSort] = useState({ key: "orders", direction: "desc" });
   const [showPackageMix, setShowPackageMix] = useState(false);
   const [decisionMetrics, setDecisionMetrics] = useState(null);
+  const [leadTime, setLeadTime] = useState(null); // avg/median days created→delivered
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [decisionError, setDecisionError] = useState("");
   const [decisionRefreshKey, setDecisionRefreshKey] = useState(0);
@@ -1255,6 +1256,11 @@ export default function InfinistoresCRM() {
       .then(data => { if (!cancelled) setDecisionMetrics(data); })
       .catch(error => { if (!cancelled) setDecisionError(error.message || "Could not load decision metrics."); })
       .finally(() => { if (!cancelled) setDecisionLoading(false); });
+    // Lead time is a separate, optional call — if the RPC isn't deployed yet the
+    // rest of Analytics still works; the tile just stays hidden.
+    sb.rpc("get_nigeria_lead_time", { p_from: decisionFrom, p_to: decisionTo, p_product: focusProduct === "all" ? null : focusProduct })
+      .then(data => { if (!cancelled) setLeadTime(data); })
+      .catch(() => { if (!cancelled) setLeadTime(null); });
     return () => { cancelled = true; };
   }, [authed, caps.analytics, tab, country, decisionFrom, decisionTo, focusProduct, decisionRefreshKey]);
 
@@ -2350,6 +2356,11 @@ export default function InfinistoresCRM() {
               { l: "7-day cohort delivery rate", v: matureDeliveryRate == null ? "-" : `${matureDeliveryRate}%`, d: matureEligible ? `${decisionOverview.mature_delivered} of ${matureEligible} eligible orders` : "No eligible mature orders" },
               { l: "Delivered units", v: Number(decisionOverview.delivered_units || 0).toLocaleString(), d: averageUnitsPerDeliveredOrder == null ? "No delivered orders" : `${averageUnitsPerDeliveredOrder.toFixed(1)} units per delivered order` },
               { l: "Delivered sales", v: decisionMoney(decisionOverview.net_revenue), d: `${Number(decisionOverview.delivered_orders || 0).toLocaleString()} orders received this period, after delivery fees` },
+              ...(leadTime && Number(leadTime.sample || 0) > 0 ? [{
+                l: "Avg. delivery time",
+                v: `${leadTime.avg_days} days`,
+                d: `Median ${leadTime.median_days}d · 90% within ${leadTime.p90_days}d${Number(leadTime.missing_timestamp || 0) > 0 ? ` · ${leadTime.sample} of ${leadTime.delivered_orders} orders have a delivery date` : ""}`,
+              }] : []),
               { l: "Tagged ad spend", v: decisionMoney(decisionFinance.tagged_ad_spend), d: Number(decisionFinance.unallocated_ad_spend || 0) > 0 ? `${decisionMoney(decisionFinance.unallocated_ad_spend)} still unallocated` : "All recorded spend is tagged" },
               { l: "Cash received", v: focusProduct === "all" ? decisionMoney(decisionFinance.cash_received) : "—", d: focusProduct === "all" ? "Cash-flow entries recorded this period" : "Cash is not allocated by product" },
             ].map(card => <div key={card.l} className="cx-insight-kpi">
