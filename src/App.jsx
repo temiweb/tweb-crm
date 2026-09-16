@@ -924,6 +924,7 @@ export default function InfinistoresCRM() {
   const [faulty, setFaulty] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [ghProducts, setGhProducts] = useState([]); // VDL catalogue mirror (read-only)
+  const [ghStockOpen, setGhStockOpen] = useState({}); // code -> show in-flight state breakdown
   const [vdlOrders, setVdlOrders] = useState([]);   // Ghana order sidecar rows
   const [ghRegions, setGhRegions] = useState([]);   // VDL's 17 regions (for the Held region fix)
   const [staff, setStaff] = useState([]);
@@ -2802,22 +2803,38 @@ export default function InfinistoresCRM() {
               const low = active && actual < GH_LOW; // "low" now reflects true stock, not just sellable
               const byState = p.in_flight_by_state || {};
               const split = GH_FLOW.map(([k, lbl, tone]) => [lbl, Number(byState[k] || 0), tone]).filter(x => x[1] > 0);
+              const atRisk = split.some(([, , tone]) => tone); // any issue/return/unremitted units
+              const open = !!ghStockOpen[p.code];
               return (
-              <tr key={p.code}>
+              <React.Fragment key={p.code}>
+              <tr>
                 <td style={{ fontWeight: 600 }}>{p.name}</td>
                 <td style={{ fontSize: "12px", color: T.textMuted }}>{p.code}</td>
                 <td className="r cx-num" style={{ color: avail === 0 ? T.textMuted : T.text }}>{avail.toLocaleString()}</td>
-                <td className="r" style={{ verticalAlign: "top" }}>
-                  <div className="cx-num" style={{ color: T.textMuted }}>{reconciled ? inFlight.toLocaleString() : "—"}</div>
-                  {split.length > 0 && <div style={{ fontSize: "10.5px", lineHeight: 1.5, marginTop: "3px", textAlign: "right" }}>
-                    {split.map(([lbl, n, tone]) => <div key={lbl} style={{ color: tone === "danger" ? T.danger : tone === "warn" ? T.warning : T.textMuted, fontWeight: tone ? 700 : 400 }}>
-                      <span className="cx-num">{n}</span> {lbl}
-                    </div>)}
-                  </div>}
+                <td className="r">
+                  <span className="cx-num" style={{ color: T.textMuted }}>{reconciled ? inFlight.toLocaleString() : "—"}</span>
+                  {split.length > 0 && <button onClick={() => setGhStockOpen(s => ({ ...s, [p.code]: !s[p.code] }))}
+                    style={{ marginLeft: "8px", fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "20px", cursor: "pointer",
+                      border: `1px solid ${atRisk ? T.danger : T.border}`, background: "transparent", color: atRisk ? T.danger : T.textMuted }}>
+                    {atRisk && <span style={{ marginRight: "3px" }}>●</span>}{open ? "hide" : "details"}
+                  </button>}
                 </td>
                 <td className="r cx-num" style={{ fontWeight: 800, color: low ? T.danger : T.text }}>{actual.toLocaleString()}{low && <span style={{ fontSize: "10px", fontWeight: 700, color: T.danger, marginLeft: "6px" }}>LOW</span>}</td>
                 <td className="r"><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: active ? T.accentLight : T.surfaceAlt, color: active ? T.accent : T.textMuted }}>{active ? "Active" : "Inactive"}</span></td>
               </tr>
+              {open && split.length > 0 && <tr>
+                <td colSpan={6} style={{ background: T.surfaceAlt, padding: "8px 16px" }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
+                    <span style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: T.textMuted, marginRight: "2px" }}>Where the {inFlight} units are:</span>
+                    {split.map(([lbl, n, tone]) => <span key={lbl} style={{ fontSize: "11px", fontWeight: 600, padding: "3px 9px", borderRadius: "20px",
+                      background: tone === "danger" ? T.dangerBg || T.warningBg : tone === "warn" ? T.warningBg : T.surface,
+                      color: tone === "danger" ? T.danger : tone === "warn" ? T.warning : T.text, border: `1px solid ${T.border}` }}>
+                      <span className="cx-num" style={{ fontWeight: 800 }}>{n}</span> {lbl}
+                    </span>)}
+                  </div>
+                </td>
+              </tr>}
+              </React.Fragment>
             ); })}</tbody>
           </table></div></Card>}
       </>}
