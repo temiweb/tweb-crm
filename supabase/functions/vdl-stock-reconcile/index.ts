@@ -51,7 +51,8 @@ async function alert(level: "info" | "warn" | "error", message: string): Promise
 Deno.serve(async () => {
   if (!VDL_BASE || !VDL_TOKEN) return json(400, { ok: false, error: "VDL secrets not set" });
 
-  const inFlight: Record<string, number> = {};   // code -> units still out
+  const inFlight: Record<string, number> = {};                        // code -> units still out
+  const byCodeState: Record<string, Record<string, number>> = {};     // code -> { state -> units }
   const cutoff = Date.now() - WINDOW_DAYS * 24 * 3600 * 1000;
   let scanned = 0, counted = 0;
 
@@ -74,7 +75,11 @@ Deno.serve(async () => {
           if (!code) continue;
           const pivot = (p.pivot ?? {}) as Record<string, unknown>;
           const out = Number(pivot.quantity ?? 0) - Number(pivot.quantity_returned ?? 0);
-          if (out > 0) { inFlight[code] = (inFlight[code] || 0) + out; counted += out; }
+          if (out > 0) {
+            inFlight[code] = (inFlight[code] || 0) + out;
+            (byCodeState[code] ??= {})[label] = (byCodeState[code][label] || 0) + out;
+            counted += out;
+          }
         }
       }
       const next = (Array.isArray(container) ? body?.next_page_url : container?.next_page_url) ?? null;
@@ -88,13 +93,17 @@ Deno.serve(async () => {
     const results = await Promise.all(prods.map(p =>
       fetch(`${SUPABASE_URL}/rest/v1/gh_products?code=eq.${encodeURIComponent(p.code)}`, {
         method: "PATCH", headers: { ...svc, Prefer: "return=minimal" },
-        body: JSON.stringify({ in_flight_units: inFlight[p.code] || 0, stock_reconciled_at: now }),
+        body: JSON.stringify({
+          in_flight_units: inFlight[p.code] || 0,
+          in_flight_by_state: byCodeState[p.code] ?? {},
+          stock_reconciled_at: now,
+        }),
       })
     ));
     const failed = results.find(r => !r.ok);
     if (failed) throw new Error(`gh_products update ${failed.status}: ${(await failed.text()).slice(0, 200)}`);
 
-    return json(200, { ok: true, scanned, in_flight_units_total: counted, by_code: inFlight });
+    return json(200, { ok: true, scanned, in_flight_units_total: counted, by_code: inFlight, by_code_state: byCodeState });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await alert("error", `vdl-stock-reconcile failed: ${msg}`);

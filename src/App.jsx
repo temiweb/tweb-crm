@@ -2619,6 +2619,19 @@ export default function InfinistoresCRM() {
   // ── GHANA / VDL — its own workspace (no NG country switcher any more).
   // Ghana delivery is handled by VDL; this is not the Nigerian agent model.
   const GH_LOW = 10;
+  // In-flight states, in delivery-flow order, with compact labels for the
+  // per-product sub-line. Issue / Return Initiated are units at risk (danger);
+  // Delivery Completed is delivered-but-unremitted cash (warning).
+  const GH_FLOW = [
+    ["Packaged", "packaged", null],
+    ["Out for Delivery", "out for delivery", null],
+    ["In Transit", "in transit", null],
+    ["In Transit To Regional Hub", "→ hub", null],
+    ["Arrived At Regional Hub", "at hub", null],
+    ["Delivery Completed", "delivered·unremitted", "warn"],
+    ["Issue", "issue", "danger"],
+    ["Return Initiated", "return initiated", "danger"],
+  ];
   const ghMoney = n => `GH₵${Number(n || 0).toLocaleString()}`;
   const ghLastSynced = ghProducts.reduce((m, p) => (p.synced_at && (!m || p.synced_at > m) ? p.synced_at : m), null);
   const vdlByOrder = {}; vdlOrders.forEach(v => { vdlByOrder[v.order_id] = v; });
@@ -2775,7 +2788,7 @@ export default function InfinistoresCRM() {
 
       {ghanaTab === "catalogue" && <>
         <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
-          <b style={{ color: T.text }}>Available</b> = free to sell now · <b style={{ color: T.text }}>In-flight</b> = units out on active orders (Packaged → Delivery Completed) · <b style={{ color: T.text }}>Actual in country</b> = your true physical stock (available + in-flight). Catalogue synced from VDL{ghLastSynced ? ` ${new Date(ghLastSynced).toLocaleString()}` : ""}; in-flight reconciled daily.
+          <b style={{ color: T.text }}>Available</b> = free to sell now · <b style={{ color: T.text }}>In-flight</b> = units out on active orders (Packaged → Delivery Completed) · <b style={{ color: T.text }}>Actual in country</b> = your true physical stock (available + in-flight). The In-flight column breaks each product down by where its units are — <span style={{ color: T.danger, fontWeight: 700 }}>issue / return</span> and <span style={{ color: T.warning, fontWeight: 700 }}>delivered·unremitted</span> are the ones to chase. Catalogue synced from VDL{ghLastSynced ? ` ${new Date(ghLastSynced).toLocaleString()}` : ""}; in-flight reconciled daily.
         </Card>
         {ghProducts.length === 0 ? ghEmpty("No catalogue yet — run vdl-product-sync") :
           <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
@@ -2787,12 +2800,21 @@ export default function InfinistoresCRM() {
               const inFlight = Number(p.in_flight_units || 0);
               const actual = avail + inFlight;
               const low = active && actual < GH_LOW; // "low" now reflects true stock, not just sellable
+              const byState = p.in_flight_by_state || {};
+              const split = GH_FLOW.map(([k, lbl, tone]) => [lbl, Number(byState[k] || 0), tone]).filter(x => x[1] > 0);
               return (
               <tr key={p.code}>
                 <td style={{ fontWeight: 600 }}>{p.name}</td>
                 <td style={{ fontSize: "12px", color: T.textMuted }}>{p.code}</td>
                 <td className="r cx-num" style={{ color: avail === 0 ? T.textMuted : T.text }}>{avail.toLocaleString()}</td>
-                <td className="r cx-num" style={{ color: T.textMuted }}>{reconciled ? inFlight.toLocaleString() : "—"}</td>
+                <td className="r" style={{ verticalAlign: "top" }}>
+                  <div className="cx-num" style={{ color: T.textMuted }}>{reconciled ? inFlight.toLocaleString() : "—"}</div>
+                  {split.length > 0 && <div style={{ fontSize: "10.5px", lineHeight: 1.5, marginTop: "3px", textAlign: "right" }}>
+                    {split.map(([lbl, n, tone]) => <div key={lbl} style={{ color: tone === "danger" ? T.danger : tone === "warn" ? T.warning : T.textMuted, fontWeight: tone ? 700 : 400 }}>
+                      <span className="cx-num">{n}</span> {lbl}
+                    </div>)}
+                  </div>}
+                </td>
                 <td className="r cx-num" style={{ fontWeight: 800, color: low ? T.danger : T.text }}>{actual.toLocaleString()}{low && <span style={{ fontSize: "10px", fontWeight: 700, color: T.danger, marginLeft: "6px" }}>LOW</span>}</td>
                 <td className="r"><span style={{ fontSize: "11px", fontWeight: 700, padding: "3px 9px", borderRadius: "20px", background: active ? T.accentLight : T.surfaceAlt, color: active ? T.accent : T.textMuted }}>{active ? "Active" : "Inactive"}</span></td>
               </tr>
