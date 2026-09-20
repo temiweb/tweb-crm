@@ -7,7 +7,7 @@ import {
   Phone, MessageCircle, Plus, ArrowUpRight, ArrowDownRight,
   Store, RefreshCw, LogOut, Upload, Download, Users, Pencil, Trash2, X,
   Package, TrendingUp, Wallet, CheckCircle2, Clock, Filter,
-  Copy, UserPlus, AlertTriangle
+  Copy, UserPlus, AlertTriangle, Archive, RotateCcw
 } from "lucide-react";
 
 /*
@@ -992,6 +992,7 @@ export default function InfinistoresCRM() {
   const [editOrder, setEditOrder] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
+  const [showArchivedAgents, setShowArchivedAgents] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAssign, setShowAssign] = useState(null);
   const [assignAll, setAssignAll] = useState(false);
@@ -1215,7 +1216,8 @@ export default function InfinistoresCRM() {
 
   // ─── Derived ───
   const cOrders = useMemo(() => orders.filter(o => o.country === country), [orders, country]);
-  const cAgents = useMemo(() => agents.filter(a => a.country === country), [agents, country]);
+  const cAgents = useMemo(() => agents.filter(a => a.country === country && a.active !== false), [agents, country]);
+  const archivedAgents = useMemo(() => agents.filter(a => a.country === country && a.active === false), [agents, country]);
   const callers = useMemo(() => staff.filter(s => s.role === "caller" && s.active), [staff]);
   const staffByUid = useMemo(() => { const m = {}; staff.forEach(s => { if (s.auth_user_id) m[s.auth_user_id] = s; }); return m; }, [staff]);
 
@@ -1674,20 +1676,27 @@ export default function InfinistoresCRM() {
     setShowAddAgent(false);
   };
 
-  const doDeleteAgent = async (id) => {
+  const doArchiveAgent = async (id) => {
     const agent = agents.find(a => a.id === id);
     const stock = inventory.filter(i => i.agent_id === id);
     const unitsInStock = stock.reduce((total, item) => total + (item.qty || 0), 0);
     if (unitsInStock > 0) {
-      showToast(`${agent?.name || "This agent"} still has ${unitsInStock} unit${unitsInStock === 1 ? "" : "s"} in stock. Transfer or reconcile the stock before deleting the agent.`);
+      showToast(`${agent?.name || "This agent"} still has ${unitsInStock} unit${unitsInStock === 1 ? "" : "s"} in stock. Transfer or reconcile the stock before archiving the agent.`);
       return;
     }
-    if (!window.confirm(`Delete ${agent?.name || "this agent"}? Their zero-stock inventory records will also be removed. Historical orders and stock records will be kept.`)) return;
+    if (!window.confirm(`Archive ${agent?.name || "this agent"}? They will disappear from active agent, stock, and assignment lists. Historical records will remain.`)) return;
     try {
-      if (stock.length) await sb.delete("inventory", { agent_id: id });
-      await sb.delete("agents", { id });
+      await sb.update("agents", { id }, { active: false });
       await refreshInventoryData();
-      showToast("Agent deleted", "success");
+      showToast("Agent archived", "success");
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
+  };
+
+  const doRestoreAgent = async (id) => {
+    try {
+      await sb.update("agents", { id }, { active: true });
+      await refreshInventoryData();
+      showToast("Agent restored", "success");
     } catch (err) { showToast(err.message); await refreshInventoryData(); }
   };
 
@@ -2138,6 +2147,7 @@ export default function InfinistoresCRM() {
         <div><h1 className="cx-h1">Agents</h1><div className="cx-sub">Delivery agents and their performance</div></div>
         <div style={{ display: "flex", gap: "8px" }}>
           {cAgents.length > 0 && <Btn v="secondary" onClick={exportAgents}><Download size={15} />Export</Btn>}
+          {archivedAgents.length > 0 && <Btn v="secondary" onClick={() => setShowArchivedAgents(v => !v)}><Archive size={15} />Archived ({archivedAgents.length})</Btn>}
           {caps.agents === "edit" && <Btn onClick={() => setShowAddAgent(true)}><Plus size={16} />Add agent</Btn>}
         </div>
       </div>
@@ -2174,11 +2184,18 @@ export default function InfinistoresCRM() {
             <div style={{ display: "flex", gap: "6px" }}>
               <Btn v="secondary" sz="sm" onClick={() => setShowStock(a.id)} style={{ flex: 1, justifyContent: "center" }}><Boxes size={14} />{caps.inventory === "edit" ? "Manage stock" : "View stock"}</Btn>
               {caps.agents === "edit" && <Btn v="secondary" sz="sm" onClick={() => setEditAgent(a)}><Pencil size={14} />Edit</Btn>}
-              {caps.agents === "edit" && <Btn v="ghost" sz="sm" onClick={() => doDeleteAgent(a.id)} style={{ color: T.danger }}><Trash2 size={14} /></Btn>}
+              {caps.agents === "edit" && <Btn v="ghost" sz="sm" onClick={() => doArchiveAgent(a.id)} title="Archive agent" style={{ color: T.textMuted }}><Archive size={14} /></Btn>}
             </div>
           </Card>
         ); })}
       </div>
+      {showArchivedAgents && archivedAgents.length > 0 && <Card style={{ marginTop: "16px", padding: "14px 16px" }}>
+        <div style={{ fontWeight: 700, fontFamily: T.fd, fontSize: "14px", marginBottom: "8px" }}>Archived agents</div>
+        <div style={{ display: "grid", gap: "6px" }}>{archivedAgents.map(a => <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", padding: "8px 0", borderTop: `1px solid ${T.borderLight}` }}>
+          <div><div style={{ fontWeight: 600, fontSize: "13px" }}>{a.name}</div><div style={{ color: T.textMuted, fontSize: "11px" }}>{cleanPhone(a.phone)} · {(a.states || []).join(", ") || "No states"}</div></div>
+          {caps.agents === "edit" && <Btn v="secondary" sz="sm" onClick={() => doRestoreAgent(a.id)}><RotateCcw size={13} />Restore</Btn>}
+        </div>)}</div>
+      </Card>}
     </div>
   );
 
