@@ -925,7 +925,17 @@ export default function InfinistoresCRM() {
   const [transfers, setTransfers] = useState([]);
   const [ghProducts, setGhProducts] = useState([]); // VDL catalogue mirror (read-only)
   const [ghStockOpen, setGhStockOpen] = useState({}); // code -> show in-flight state breakdown
-  const [vdlOrders, setVdlOrders] = useState([]);   // Ghana order sidecar rows
+  const [ghRows, setGhRows] = useState([]);
+  const [ghTotal, setGhTotal] = useState(0);
+  const [ghLoading, setGhLoading] = useState(false);
+  const [ghPage, setGhPage] = useState(0);
+  const [ghPageSize, setGhPageSize] = useState(50);
+  const [ghSearch, setGhSearch] = useState("");
+  const [ghStatus, setGhStatus] = useState("");
+  const [ghFrom, setGhFrom] = useState("");
+  const [ghTo, setGhTo] = useState("");
+  const [ghFilters, setGhFilters] = useState({ search: "", status: "", from: "", to: "" });
+  const [ghRefreshKey, setGhRefreshKey] = useState(0);
   const [ghRegions, setGhRegions] = useState([]);   // VDL's 17 regions (for the Held region fix)
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState({});
@@ -1031,7 +1041,7 @@ export default function InfinistoresCRM() {
 
       if (doFull) {
         const [o, a, p, inv, t] = await Promise.all([
-          sb.queryAll("orders", "order=created_at.desc"),
+          sb.queryAll("orders", "country=eq.nigeria&order=created_at.desc"),
           sb.query("agents", "order=created_at.asc"),
           sb.query("products", "order=created_at.asc"),
           sb.query("inventory"),
@@ -1058,16 +1068,15 @@ export default function InfinistoresCRM() {
         } catch { /* inventory tables not present yet */ }
         try { setStaff(await sb.query("staff", "order=created_at.asc") || []); } catch { /* staff table not present yet */ }
         try { setGhProducts(await sb.query("gh_products", "order=name.asc") || []); } catch { /* gh_products not present yet */ }
-        try { setVdlOrders(await sb.query("vdl_orders", "order=created_at.desc") || []); } catch { /* vdl_orders not present yet */ }
         try { setGhRegions(await sb.query("gh_regions", "order=name.asc") || []); } catch { /* gh_regions not present yet */ }
       } else {
         // Incremental: only orders changed since the cursor (gte re-includes the
         // boundary row — harmless, merged by id — so no edit is ever missed).
         const cursor = syncCursorRef.current;
         const [delta, inv, remoteOrderCount] = await Promise.all([
-          sb.query("orders", `updated_at=gte.${encodeURIComponent(cursor)}&order=updated_at.desc`),
+          sb.query("orders", `country=eq.nigeria&updated_at=gte.${encodeURIComponent(cursor)}&order=updated_at.desc`),
           sb.query("inventory"),
-          checkForDeletes ? sb.count("orders") : Promise.resolve(null),
+          checkForDeletes ? sb.count("orders", "country=eq.nigeria") : Promise.resolve(null),
         ]);
         if (remoteOrderCount != null && remoteOrderCount !== ordersRef.current.length) {
           return loadAll(retries, false);
@@ -2663,26 +2672,62 @@ export default function InfinistoresCRM() {
   ];
   const ghMoney = n => `GH₵${Number(n || 0).toLocaleString()}`;
   const ghLastSynced = ghProducts.reduce((m, p) => (p.synced_at && (!m || p.synced_at > m) ? p.synced_at : m), null);
-  const vdlByOrder = {}; vdlOrders.forEach(v => { vdlByOrder[v.order_id] = v; });
-  const ghOrders = orders.filter(o => o.country === "ghana").map(o => ({ ...o, vdl: vdlByOrder[o.id] })).filter(o => o.vdl);
-  const ghReview = ghOrders.filter(o => o.vdl.vdl_sync_status === "needs_review");
-  const ghHeld = ghOrders.filter(o => ["held", "failed", "auth_failed"].includes(o.vdl.vdl_sync_status));
-  const ghSynced = ghOrders.filter(o => ["approved", "pushing", "synced"].includes(o.vdl.vdl_sync_status));
+  const ghScope = ["review", "held", "synced"].includes(ghanaTab) ? ghanaTab : null;
+  const ghOrders = useMemo(() => ghRows.map(row => ({
+    id: row.order_id, name: row.name, phone: row.phone, address: row.address,
+    notes: row.notes, state: row.state, product: row.product, qty: row.qty,
+    created_at: row.order_created_at,
+    vdl: {
+      order_id: row.order_id, gh_location: row.gh_location, gh_region_name: row.gh_region_name,
+      gh_quantity: row.gh_quantity, gh_expected_total: row.gh_expected_total,
+      gh_discount_amount: row.gh_discount_amount, gh_raw_address: row.gh_raw_address,
+      vdl_sync_status: row.vdl_sync_status, vdl_sync_error: row.vdl_sync_error,
+      vdl_order_id: row.vdl_order_id, vdl_tracking_id: row.vdl_tracking_id,
+      vdl_state_label: row.vdl_state_label, vdl_amount_due_customer: row.vdl_amount_due_customer,
+      vdl_vendor_amount_due: row.vdl_vendor_amount_due, vdl_commission_amount: row.vdl_commission_amount,
+      vdl_delivery_fee: row.vdl_delivery_fee, vdl_packaging_fee: row.vdl_packaging_fee,
+    },
+  })), [ghRows]);
+  const ghReview = ghScope === "review" ? ghOrders : [];
+  const ghHeld = ghScope === "held" ? ghOrders : [];
+  const ghSynced = ghScope === "synced" ? ghOrders : [];
+  const refreshGhana = () => setGhRefreshKey(key => key + 1);
+
+  useEffect(() => {
+    if (!authed || tab !== "ghana" || !ghScope) return;
+    let cancelled = false;
+    setGhLoading(true);
+    setGhRows([]);
+    setGhTotal(0);
+    sb.rpc("get_ghana_vdl_orders", {
+      p_scope: ghScope,
+      p_search: ghScope === "synced" ? ghFilters.search || null : null,
+      p_vdl_status: ghScope === "synced" ? ghFilters.status || null : null,
+      p_from: ghScope === "synced" ? ghFilters.from || null : null,
+      p_to: ghScope === "synced" ? ghFilters.to || null : null,
+      p_page: ghPage, p_page_size: ghPageSize,
+    }).then(rows => {
+      if (cancelled) return;
+      setGhRows(rows || []);
+      setGhTotal(rows?.[0]?.total_count ? Number(rows[0].total_count) : 0);
+    }).catch(err => {
+      if (!cancelled) { setGhRows([]); setGhTotal(0); showToast(err.message); }
+    }).finally(() => { if (!cancelled) setGhLoading(false); });
+    return () => { cancelled = true; };
+  }, [authed, tab, ghScope, ghFilters, ghPage, ghPageSize, ghRefreshKey]);
 
   const draftVal = (id, field, fb) => (ghDraft[id] && ghDraft[id][field] !== undefined) ? ghDraft[id][field] : fb;
   const setDraft = (id, field, value) => setGhDraft(d => ({ ...d, [id]: { ...(d[id] || {}), [field]: value } }));
   const toggleGhSel = id => setGhSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const doGhApprove = async (o) => {
     const location = draftVal(o.id, "location", o.vdl.gh_location || o.address || "");
-    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, gh_location: location, vdl_sync_status: "approved" } : v));
-    try { await sb.update("vdl_orders", { order_id: o.id }, { gh_location: location, vdl_sync_status: "approved" }); showToast("Order approved for VDL", "success"); }
+    try { await sb.update("vdl_orders", { order_id: o.id }, { gh_location: location, vdl_sync_status: "approved" }); refreshGhana(); showToast("Order approved for VDL", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   const doGhBulkApprove = async () => {
     const ids = [...ghSel];
-    setVdlOrders(prev => prev.map(v => ghSel.has(v.order_id) ? { ...v, vdl_sync_status: "approved" } : v));
     setGhSel(new Set());
-    try { await Promise.all(ids.map(id => sb.update("vdl_orders", { order_id: id }, { vdl_sync_status: "approved" }))); }
+    try { await Promise.all(ids.map(id => sb.update("vdl_orders", { order_id: id }, { vdl_sync_status: "approved" }))); refreshGhana(); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   const doGhReReview = async (o) => {
@@ -2694,14 +2739,12 @@ export default function InfinistoresCRM() {
       gh_location: draftVal(o.id, "location", o.vdl.gh_location || o.address || ""),
       vdl_sync_status: "needs_review", vdl_sync_error: null,
     };
-    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, ...patch } : v));
-    try { await sb.update("vdl_orders", { order_id: o.id }, patch); showToast("Sent back to review", "success"); }
+    try { await sb.update("vdl_orders", { order_id: o.id }, patch); refreshGhana(); showToast("Sent back to review", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   // Recall an approved (not-yet-pushed) order back to review.
   const doGhRecall = async (o) => {
-    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, vdl_sync_status: "needs_review" } : v));
-    try { await sb.update("vdl_orders", { order_id: o.id }, { vdl_sync_status: "needs_review" }); showToast("Recalled to review", "success"); }
+    try { await sb.update("vdl_orders", { order_id: o.id }, { vdl_sync_status: "needs_review" }); refreshGhana(); showToast("Recalled to review", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   // Full edit (location, comment, package, region, contact) — status unchanged.
@@ -2714,9 +2757,7 @@ export default function InfinistoresCRM() {
       gh_discount_amount: Number(o.vdl.gh_discount_amount) || 0,
     };
     setEditGhOrder(null);
-    setOrders(prev => prev.map(x => x.id === o.id ? { ...x, ...orderPatch } : x));
-    setVdlOrders(prev => prev.map(v => v.order_id === o.id ? { ...v, ...vdlPatch } : v));
-    try { await Promise.all([sb.update("orders", { id: o.id }, orderPatch), sb.update("vdl_orders", { order_id: o.id }, vdlPatch)]); showToast("Order updated", "success"); }
+    try { await Promise.all([sb.update("orders", { id: o.id }, orderPatch), sb.update("vdl_orders", { order_id: o.id }, vdlPatch)]); refreshGhana(); showToast("Order updated", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   const openGhEdit = o => setEditGhOrder({ ...o, vdl: { ...o.vdl } });
@@ -2725,27 +2766,27 @@ export default function InfinistoresCRM() {
     if (!window.confirm(atVdl
       ? "This order is already at VDL. Deleting removes it from the CRM only — it does NOT cancel the VDL delivery. Continue?"
       : "Delete this Ghana order?")) return;
-    setOrders(prev => prev.filter(x => x.id !== o.id));       // sidecar cascades in the DB
-    setVdlOrders(prev => prev.filter(v => v.order_id !== o.id));
-    try { await sb.delete("orders", { id: o.id }); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.delete("orders", { id: o.id }); refreshGhana(); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const ghSubs = [
-    { id: "review", label: `Needs review${ghReview.length ? ` (${ghReview.length})` : ""}` },
-    { id: "held", label: `Held${ghHeld.length ? ` (${ghHeld.length})` : ""}` },
+    { id: "review", label: "Needs review" },
+    { id: "held", label: "Held" },
     { id: "synced", label: "Synced" },
     { id: "catalogue", label: "Catalogue" },
   ];
   const ghEmpty = msg => <Card className="cx-empty"><Truck size={40} /><div className="cx-section-t" style={{ color: T.text }}>{msg}</div></Card>;
+  const applyGhFilters = () => { setGhFilters({ search: ghSearch.trim(), status: ghStatus.trim(), from: ghFrom, to: ghTo }); setGhPage(0); };
+  const clearGhFilters = () => { setGhSearch(""); setGhStatus(""); setGhFrom(""); setGhTo(""); setGhFilters({ search: "", status: "", from: "", to: "" }); setGhPage(0); };
 
   const GhanaScreen = (
     <div>
       <div className="cx-head">
         <div><h1 className="cx-h1">Ghana fulfilment</h1><div className="cx-sub">VDL Fulfilment · you approve the address, VDL delivers</div></div>
       </div>
-      <div className="cx-tabs">{ghSubs.map(s => <button key={s.id} className={`cx-tab ${ghanaTab === s.id ? "on" : ""}`} onClick={() => setGhanaTab(s.id)}>{s.label}</button>)}</div>
+      <div className="cx-tabs">{ghSubs.map(s => <button key={s.id} className={`cx-tab ${ghanaTab === s.id ? "on" : ""}`} onClick={() => { setGhanaTab(s.id); setGhPage(0); setGhRows([]); }}>{s.label}</button>)}</div>
 
-      {ghanaTab === "review" && (ghReview.length === 0 ? ghEmpty("No orders awaiting review") : <>
+      {ghanaTab === "review" && (ghLoading ? ghEmpty("Loading orders awaiting review…") : ghReview.length === 0 ? ghEmpty("No orders awaiting review") : <>
         {ghSel.size > 0 && <div style={{ display: "flex", gap: "8px", alignItems: "center", background: T.accentLight, padding: "10px 14px", borderRadius: T.rs, border: `1.5px solid ${T.accentMid}`, marginBottom: "12px" }}>
           <span style={{ fontWeight: 700, color: T.accent, fontSize: "13px" }}>{ghSel.size} selected</span>
           <Btn sz="sm" onClick={doGhBulkApprove}>Approve selected (uses current address)</Btn>
@@ -2770,9 +2811,11 @@ export default function InfinistoresCRM() {
             </tr>
           ))}</tbody>
         </table></div></Card>
+        <Pagination page={ghPage} total={ghTotal} pageSize={ghPageSize} onPage={setGhPage} onPageSize={size => { setGhPageSize(size); setGhPage(0); }} />
       </>)}
 
-      {ghanaTab === "held" && (ghHeld.length === 0 ? ghEmpty("Nothing held — all clear") : <div style={{ display: "grid", gap: "10px" }}>
+      {ghanaTab === "held" && (ghLoading ? ghEmpty("Loading held orders…") : ghHeld.length === 0 ? ghEmpty("Nothing held — all clear") : <>
+      <div style={{ display: "grid", gap: "10px" }}>
         {ghHeld.map(o => (
           <Card key={o.id} style={{ padding: "14px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
@@ -2791,9 +2834,31 @@ export default function InfinistoresCRM() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}>{caps.del && <Btn v="ghost" sz="sm" onClick={() => doGhDelete(o)} style={{ color: T.danger, marginRight: "auto" }}><Trash2 size={14} />Delete</Btn>}<Btn v="secondary" sz="sm" onClick={() => openGhEdit(o)}><Pencil size={14} />Full edit</Btn><Btn sz="sm" onClick={() => doGhReReview(o)}>Save &amp; send to review</Btn></div>
           </Card>
         ))}
-      </div>)}
+      </div>
+      <Pagination page={ghPage} total={ghTotal} pageSize={ghPageSize} onPage={setGhPage} onPageSize={size => { setGhPageSize(size); setGhPage(0); }} />
+      </>)}
 
-      {ghanaTab === "synced" && (ghSynced.length === 0 ? ghEmpty("Nothing pushed yet") :
+      {ghanaTab === "synced" && <>
+        <Card style={{ padding: "12px", marginBottom: "12px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "end" }}>
+            <label style={{ flex: "1 1 190px", fontSize: "10px", color: T.textMuted, fontWeight: 700, textTransform: "uppercase" }}>Search customer, phone or tracking
+              <input value={ghSearch} onChange={e => setGhSearch(e.target.value)} onKeyDown={e => { if (e.key === "Enter") applyGhFilters(); }} placeholder="Search…" style={{ width: "100%", marginTop: "4px", padding: "8px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
+            </label>
+            <label style={{ flex: "1 1 145px", fontSize: "10px", color: T.textMuted, fontWeight: 700, textTransform: "uppercase" }}>VDL status
+              <input list="gh-vdl-statuses" value={ghStatus} onChange={e => setGhStatus(e.target.value)} placeholder="All statuses" style={{ width: "100%", marginTop: "4px", padding: "8px 10px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
+              <datalist id="gh-vdl-statuses"><option value="Not pushed" /><option value="Pending" /><option value="Confirmed" /><option value="Packaged" /><option value="Out for Delivery" /><option value="Delivery Completed" /><option value="Cancelled" /><option value="Not Answering" /><option value="Issue" /><option value="Return Initiated" /></datalist>
+            </label>
+            <label style={{ fontSize: "10px", color: T.textMuted, fontWeight: 700, textTransform: "uppercase" }}>Received from
+              <input type="date" value={ghFrom} onChange={e => setGhFrom(e.target.value)} style={{ display: "block", marginTop: "4px", padding: "8px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
+            </label>
+            <label style={{ fontSize: "10px", color: T.textMuted, fontWeight: 700, textTransform: "uppercase" }}>To
+              <input type="date" value={ghTo} onChange={e => setGhTo(e.target.value)} style={{ display: "block", marginTop: "4px", padding: "8px 9px", border: `1.5px solid ${T.border}`, borderRadius: T.rs, fontSize: "12px", background: T.surface }} />
+            </label>
+            <Btn sz="sm" onClick={applyGhFilters}><Search size={14} />Search</Btn>
+            {(ghFilters.search || ghFilters.status || ghFilters.from || ghFilters.to) && <Btn v="secondary" sz="sm" onClick={clearGhFilters}>Clear</Btn>}
+          </div>
+        </Card>
+        {ghLoading ? ghEmpty("Loading fulfilment records…") : ghSynced.length === 0 ? ghEmpty("No matching fulfilment records") : <>
         <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
           <thead><tr><th>Customer</th><th>Status</th><th>Tracking</th><th className="r">Amount due</th><th className="r">Vendor due</th><th className="r">Fees</th><th className="r">Actions</th></tr></thead>
           <tbody>{ghSynced.map(o => (
@@ -2813,7 +2878,9 @@ export default function InfinistoresCRM() {
             </tr>
           ))}</tbody>
         </table></div></Card>
-      )}
+        <Pagination page={ghPage} total={ghTotal} pageSize={ghPageSize} onPage={setGhPage} onPageSize={size => { setGhPageSize(size); setGhPage(0); }} />
+        </>}
+      </>}
 
       {ghanaTab === "catalogue" && <>
         <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
