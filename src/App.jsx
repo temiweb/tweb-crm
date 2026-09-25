@@ -935,7 +935,6 @@ export default function InfinistoresCRM() {
   const [ghFrom, setGhFrom] = useState("");
   const [ghTo, setGhTo] = useState("");
   const [ghFilters, setGhFilters] = useState({ search: "", status: "", from: "", to: "" });
-  const [ghRefreshKey, setGhRefreshKey] = useState(0);
   const [ghRegions, setGhRegions] = useState([]);   // VDL's 17 regions (for the Held region fix)
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState({});
@@ -1245,7 +1244,7 @@ export default function InfinistoresCRM() {
       if (!cancelled) { setGhRows([]); setGhTotal(0); showToast(err.message); }
     }).finally(() => { if (!cancelled) setGhLoading(false); });
     return () => { cancelled = true; };
-  }, [authed, tab, ghScope, ghFilters, ghPage, ghPageSize, ghRefreshKey]);
+  }, [authed, tab, ghScope, ghFilters, ghPage, ghPageSize]);
 
   // ─── Derived ───
   const cOrders = useMemo(() => orders.filter(o => o.country === country), [orders, country]);
@@ -2714,20 +2713,32 @@ export default function InfinistoresCRM() {
   const ghReview = ghScope === "review" ? ghOrders : [];
   const ghHeld = ghScope === "held" ? ghOrders : [];
   const ghSynced = ghScope === "synced" ? ghOrders : [];
-  const refreshGhana = () => setGhRefreshKey(key => key + 1);
+  const removeGhRows = (ids) => {
+    const removed = new Set(Array.isArray(ids) ? ids : [ids]);
+    setGhRows(rows => rows.filter(row => !removed.has(row.order_id)));
+    setGhTotal(total => Math.max(0, total - removed.size));
+    setGhDraft(drafts => {
+      const next = { ...drafts };
+      removed.forEach(id => delete next[id]);
+      return next;
+    });
+  };
+
+  const updateGhRow = (orderId, patch) => {
+    setGhRows(rows => rows.map(row => row.order_id === orderId ? { ...row, ...patch } : row));
+  };
 
   const draftVal = (id, field, fb) => (ghDraft[id] && ghDraft[id][field] !== undefined) ? ghDraft[id][field] : fb;
   const setDraft = (id, field, value) => setGhDraft(d => ({ ...d, [id]: { ...(d[id] || {}), [field]: value } }));
   const toggleGhSel = id => setGhSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const doGhApprove = async (o) => {
     const location = draftVal(o.id, "location", o.vdl.gh_location || o.address || "");
-    try { await sb.update("vdl_orders", { order_id: o.id }, { gh_location: location, vdl_sync_status: "approved" }); refreshGhana(); showToast("Order approved for VDL", "success"); }
+    try { await sb.update("vdl_orders", { order_id: o.id }, { gh_location: location, vdl_sync_status: "approved" }); removeGhRows(o.id); showToast("Order approved for VDL", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   const doGhBulkApprove = async () => {
     const ids = [...ghSel];
-    setGhSel(new Set());
-    try { await Promise.all(ids.map(id => sb.update("vdl_orders", { order_id: id }, { vdl_sync_status: "approved" }))); refreshGhana(); }
+    try { await Promise.all(ids.map(id => sb.update("vdl_orders", { order_id: id }, { vdl_sync_status: "approved" }))); removeGhRows(ids); setGhSel(new Set()); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   const doGhReReview = async (o) => {
@@ -2739,12 +2750,12 @@ export default function InfinistoresCRM() {
       gh_location: draftVal(o.id, "location", o.vdl.gh_location || o.address || ""),
       vdl_sync_status: "needs_review", vdl_sync_error: null,
     };
-    try { await sb.update("vdl_orders", { order_id: o.id }, patch); refreshGhana(); showToast("Sent back to review", "success"); }
+    try { await sb.update("vdl_orders", { order_id: o.id }, patch); removeGhRows(o.id); showToast("Sent back to review", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   // Recall an approved (not-yet-pushed) order back to review.
   const doGhRecall = async (o) => {
-    try { await sb.update("vdl_orders", { order_id: o.id }, { vdl_sync_status: "needs_review" }); refreshGhana(); showToast("Recalled to review", "success"); }
+    try { await sb.update("vdl_orders", { order_id: o.id }, { vdl_sync_status: "needs_review" }); removeGhRows(o.id); showToast("Recalled to review", "success"); }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   // Full edit (location, comment, package, region, contact) — status unchanged.
@@ -2757,7 +2768,11 @@ export default function InfinistoresCRM() {
       gh_discount_amount: Number(o.vdl.gh_discount_amount) || 0,
     };
     setEditGhOrder(null);
-    try { await Promise.all([sb.update("orders", { id: o.id }, orderPatch), sb.update("vdl_orders", { order_id: o.id }, vdlPatch)]); refreshGhana(); showToast("Order updated", "success"); }
+    try {
+      await Promise.all([sb.update("orders", { id: o.id }, orderPatch), sb.update("vdl_orders", { order_id: o.id }, vdlPatch)]);
+      updateGhRow(o.id, { ...orderPatch, ...vdlPatch });
+      showToast("Order updated", "success");
+    }
     catch (err) { showToast(err.message); await loadAll(); }
   };
   const openGhEdit = o => setEditGhOrder({ ...o, vdl: { ...o.vdl } });
@@ -2766,7 +2781,7 @@ export default function InfinistoresCRM() {
     if (!window.confirm(atVdl
       ? "This order is already at VDL. Deleting removes it from the CRM only — it does NOT cancel the VDL delivery. Continue?"
       : "Delete this Ghana order?")) return;
-    try { await sb.delete("orders", { id: o.id }); refreshGhana(); } catch (err) { showToast(err.message); await loadAll(); }
+    try { await sb.delete("orders", { id: o.id }); removeGhRows(o.id); } catch (err) { showToast(err.message); await loadAll(); }
   };
 
   const ghSubs = [
