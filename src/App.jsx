@@ -972,6 +972,7 @@ export default function InfinistoresCRM() {
   // Ghana is managed in the finance dashboard. CRM remains Nigeria-only while
   // preserving all historical Ghana records in the shared database.
   const country = "nigeria";
+  const ghScope = ["review", "held", "synced"].includes(ghanaTab) ? ghanaTab : null;
   const [search, setSearch] = useState("");
   const [statusF, setStatusF] = useState("all");
   const [stateF, setStateF] = useState("all");
@@ -1222,6 +1223,29 @@ export default function InfinistoresCRM() {
     })();
     return () => { cancelled = true; };
   }, [viewOrder]);
+
+  useEffect(() => {
+    if (!authed || tab !== "ghana" || !ghScope) return;
+    let cancelled = false;
+    setGhLoading(true);
+    setGhRows([]);
+    setGhTotal(0);
+    sb.rpc("get_ghana_vdl_orders", {
+      p_scope: ghScope,
+      p_search: ghScope === "synced" ? ghFilters.search || null : null,
+      p_vdl_status: ghScope === "synced" ? ghFilters.status || null : null,
+      p_from: ghScope === "synced" ? ghFilters.from || null : null,
+      p_to: ghScope === "synced" ? ghFilters.to || null : null,
+      p_page: ghPage, p_page_size: ghPageSize,
+    }).then(rows => {
+      if (cancelled) return;
+      setGhRows(rows || []);
+      setGhTotal(rows?.[0]?.total_count ? Number(rows[0].total_count) : 0);
+    }).catch(err => {
+      if (!cancelled) { setGhRows([]); setGhTotal(0); showToast(err.message); }
+    }).finally(() => { if (!cancelled) setGhLoading(false); });
+    return () => { cancelled = true; };
+  }, [authed, tab, ghScope, ghFilters, ghPage, ghPageSize, ghRefreshKey]);
 
   // ─── Derived ───
   const cOrders = useMemo(() => orders.filter(o => o.country === country), [orders, country]);
@@ -2672,8 +2696,7 @@ export default function InfinistoresCRM() {
   ];
   const ghMoney = n => `GH₵${Number(n || 0).toLocaleString()}`;
   const ghLastSynced = ghProducts.reduce((m, p) => (p.synced_at && (!m || p.synced_at > m) ? p.synced_at : m), null);
-  const ghScope = ["review", "held", "synced"].includes(ghanaTab) ? ghanaTab : null;
-  const ghOrders = useMemo(() => ghRows.map(row => ({
+  const ghOrders = ghRows.map(row => ({
     id: row.order_id, name: row.name, phone: row.phone, address: row.address,
     notes: row.notes, state: row.state, product: row.product, qty: row.qty,
     created_at: row.order_created_at,
@@ -2687,34 +2710,11 @@ export default function InfinistoresCRM() {
       vdl_vendor_amount_due: row.vdl_vendor_amount_due, vdl_commission_amount: row.vdl_commission_amount,
       vdl_delivery_fee: row.vdl_delivery_fee, vdl_packaging_fee: row.vdl_packaging_fee,
     },
-  })), [ghRows]);
+  }));
   const ghReview = ghScope === "review" ? ghOrders : [];
   const ghHeld = ghScope === "held" ? ghOrders : [];
   const ghSynced = ghScope === "synced" ? ghOrders : [];
   const refreshGhana = () => setGhRefreshKey(key => key + 1);
-
-  useEffect(() => {
-    if (!authed || tab !== "ghana" || !ghScope) return;
-    let cancelled = false;
-    setGhLoading(true);
-    setGhRows([]);
-    setGhTotal(0);
-    sb.rpc("get_ghana_vdl_orders", {
-      p_scope: ghScope,
-      p_search: ghScope === "synced" ? ghFilters.search || null : null,
-      p_vdl_status: ghScope === "synced" ? ghFilters.status || null : null,
-      p_from: ghScope === "synced" ? ghFilters.from || null : null,
-      p_to: ghScope === "synced" ? ghFilters.to || null : null,
-      p_page: ghPage, p_page_size: ghPageSize,
-    }).then(rows => {
-      if (cancelled) return;
-      setGhRows(rows || []);
-      setGhTotal(rows?.[0]?.total_count ? Number(rows[0].total_count) : 0);
-    }).catch(err => {
-      if (!cancelled) { setGhRows([]); setGhTotal(0); showToast(err.message); }
-    }).finally(() => { if (!cancelled) setGhLoading(false); });
-    return () => { cancelled = true; };
-  }, [authed, tab, ghScope, ghFilters, ghPage, ghPageSize, ghRefreshKey]);
 
   const draftVal = (id, field, fb) => (ghDraft[id] && ghDraft[id][field] !== undefined) ? ghDraft[id][field] : fb;
   const setDraft = (id, field, value) => setGhDraft(d => ({ ...d, [id]: { ...(d[id] || {}), [field]: value } }));
