@@ -283,6 +283,29 @@ const WB_STATUS = {
 // CONSTANTS & HELPERS
 // ═══════════════════════════════════════════════
 
+const NIGERIA_LOCALE = "en-NG";
+const NIGERIA_TIME_ZONE = "Africa/Lagos";
+const nigeriaDateParts = d => Object.fromEntries(
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: NIGERIA_TIME_ZONE,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(d).filter(part => part.type !== "literal").map(part => [part.type, part.value])
+);
+const nigeriaCalendarNow = () => {
+  const p = nigeriaDateParts(new Date());
+  return new Date(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+};
+const nigeriaCalendarMoment = d => new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()) - 60 * 60 * 1000);
+const nigeriaDayBoundary = (d, end = false) => nigeriaCalendarMoment(new Date(
+  d.getFullYear(), d.getMonth(), d.getDate(), end ? 23 : 0, end ? 59 : 0, end ? 59 : 0, end ? 999 : 0
+));
+const nigeriaDateKey = d => {
+  if (!d || isNaN(new Date(d))) return null;
+  const p = nigeriaDateParts(new Date(d));
+  return `${p.year}-${p.month}-${p.day}`;
+};
+
 // ─── Delivery-date helpers ───
 // Parse "MM/DD/YYYY", "YYYY-MM-DD", or anything Date can read → Date | null
 function parseDateStr(s) {
@@ -315,7 +338,18 @@ function fmtDate(d) {
   if (!d) return "";
   const x = d instanceof Date ? d : parseDateStr(d);
   if (!x || isNaN(x)) return "";
-  return x.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return x.toLocaleDateString(NIGERIA_LOCALE, { timeZone: NIGERIA_TIME_ZONE, day: "2-digit", month: "2-digit", year: "numeric" });
+}
+function fmtDateTime(d) {
+  if (!d) return "";
+  const x = d instanceof Date ? d : new Date(d);
+  if (isNaN(x)) return "";
+  return x.toLocaleString(NIGERIA_LOCALE, { timeZone: NIGERIA_TIME_ZONE, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+function fmtMonth(d) {
+  const x = d instanceof Date ? d : new Date(d);
+  if (isNaN(x)) return "";
+  return x.toLocaleDateString(NIGERIA_LOCALE, { timeZone: NIGERIA_TIME_ZONE, month: "short", year: "2-digit" });
 }
 
 function fillTpl(tpl, o) {
@@ -1261,21 +1295,24 @@ export default function InfinistoresCRM() {
   // One date range drives BOTH the overview stats and the orders list below.
   const periodRange = useMemo(() => {
     if (statsRange === "all") return { from: null, to: null };
-    const now = new Date();
+    const now = nigeriaCalendarNow();
     const monday = d => { const day = d.getDay(), diff = day === 0 ? 6 : day - 1; return new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff); };
     let from = null, to = null;
-    if (statsRange === "today") from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    else if (statsRange === "week") from = monday(now);
-    else if (statsRange === "lastweek") { const m = monday(now); from = new Date(m.getFullYear(), m.getMonth(), m.getDate() - 7); to = new Date(m.getFullYear(), m.getMonth(), m.getDate() - 1, 23, 59, 59); }
-    else if (statsRange === "month") from = new Date(now.getFullYear(), now.getMonth(), 1);
-    else if (statsRange === "lastmonth") { from = new Date(now.getFullYear(), now.getMonth() - 1, 1); to = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59); }
-    else if (statsRange === "30d") from = new Date(now - 30 * 864e5);
-    else if (statsRange === "90d") from = new Date(now - 90 * 864e5);
-    else if (statsRange === "custom") { if (statsFrom) from = new Date(statsFrom); if (statsTo) to = new Date(statsTo + "T23:59:59"); }
+    if (statsRange === "today") from = nigeriaDayBoundary(now);
+    else if (statsRange === "week") from = nigeriaDayBoundary(monday(now));
+    else if (statsRange === "lastweek") { const m = monday(now); from = nigeriaDayBoundary(new Date(m.getFullYear(), m.getMonth(), m.getDate() - 7)); to = nigeriaDayBoundary(new Date(m.getFullYear(), m.getMonth(), m.getDate() - 1), true); }
+    else if (statsRange === "month") from = nigeriaDayBoundary(new Date(now.getFullYear(), now.getMonth(), 1));
+    else if (statsRange === "lastmonth") { from = nigeriaDayBoundary(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = nigeriaDayBoundary(new Date(now.getFullYear(), now.getMonth(), 0), true); }
+    else if (statsRange === "30d") from = new Date(Date.now() - 30 * 864e5);
+    else if (statsRange === "90d") from = new Date(Date.now() - 90 * 864e5);
+    else if (statsRange === "custom") {
+      if (statsFrom) { const [year, month, day] = statsFrom.split("-").map(Number); from = nigeriaDayBoundary(new Date(year, month - 1, day)); }
+      if (statsTo) { const [year, month, day] = statsTo.split("-").map(Number); to = nigeriaDayBoundary(new Date(year, month - 1, day), true); }
+    }
     return { from, to };
   }, [statsRange, statsFrom, statsTo]);
 
-  const dateKey = d => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : null;
+  const dateKey = nigeriaDateKey;
   const decisionFrom = dateKey(periodRange.from);
   const decisionTo = dateKey(periodRange.to);
 
@@ -1521,17 +1558,17 @@ export default function InfinistoresCRM() {
 
   // This-month-to-date vs same span of last month (fair like-for-like).
   const momCompare = useMemo(() => {
-    const now = new Date();
-    const thisFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+    const now = nigeriaCalendarNow();
+    const thisFrom = nigeriaDayBoundary(new Date(now.getFullYear(), now.getMonth(), 1));
     const prevMonthDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
-    const lastFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastTo = new Date(now.getFullYear(), now.getMonth() - 1, Math.min(now.getDate(), prevMonthDays), now.getHours(), now.getMinutes(), now.getSeconds());
+    const lastFrom = nigeriaDayBoundary(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+    const lastTo = nigeriaCalendarMoment(new Date(now.getFullYear(), now.getMonth() - 1, Math.min(now.getDate(), prevMonthDays), now.getHours(), now.getMinutes(), now.getSeconds()));
     const calc = (from, to) => {
       const os = cOrders.filter(o => { const d = new Date(o.created_at); return d >= from && d <= to && (focusProduct === "all" || o.product === focusProduct); });
       const del = os.filter(o => o.status === "delivered");
       return { orders: os.length, delivered: del.length, rate: os.length ? Math.round(del.length / os.length * 100) : 0, rev: del.reduce((s, o) => s + (o.actual_price_collected || o.price || 0), 0) };
     };
-    return { now: calc(thisFrom, now), prev: calc(lastFrom, lastTo) };
+    return { now: calc(thisFrom, nigeriaCalendarMoment(now)), prev: calc(lastFrom, lastTo) };
   }, [cOrders, focusProduct]);
 
   // Agents ranked by delivery rate for the selected period (idle = holds stock, delivered nothing).
@@ -2289,7 +2326,7 @@ export default function InfinistoresCRM() {
           <thead><tr><th>Date</th><th>Product</th><th>Agent</th><th className="r">Qty</th><th>Status</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{waybills.map(w => { const st = WB_STATUS[w.status] || WB_STATUS.pending; return (
             <tr key={w.id}>
-              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(w.created_at).toLocaleDateString()}</td>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{fmtDate(w.created_at)}</td>
               <td>{w.product_name}</td>
               <td style={{ fontSize: "12px" }}>{agentName(w.agent_id)}</td>
               <td className="r cx-num" style={{ fontWeight: 700 }}>{w.quantity}</td>
@@ -2305,7 +2342,7 @@ export default function InfinistoresCRM() {
           <thead><tr><th>Date</th><th>Product</th><th>From</th><th>To</th><th className="r">Qty</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{transfers.map(t => (
             <tr key={t.id}>
-              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(t.created_at).toLocaleDateString()}</td>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{fmtDate(t.created_at)}</td>
               <td>{t.product_name}</td>
               <td style={{ fontSize: "12px" }}>{agentName(t.from_agent_id)}</td>
               <td style={{ fontSize: "12px" }}>{agentName(t.to_agent_id)}</td>
@@ -2321,7 +2358,7 @@ export default function InfinistoresCRM() {
           <thead><tr><th>Date</th><th>Product</th><th className="r">Qty</th><th className="r">Unit cost</th><th className="r">Total</th><th>Note</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{purchases.map(pu => (
             <tr key={pu.id}>
-              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(pu.created_at).toLocaleDateString()}</td>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{fmtDate(pu.created_at)}</td>
               <td>{pu.product_name}</td>
               <td className="r cx-num">{pu.quantity}</td>
               <td className="r cx-num">{pu.unit_cost != null ? cur + (+pu.unit_cost).toLocaleString() : "—"}</td>
@@ -2338,7 +2375,7 @@ export default function InfinistoresCRM() {
           <thead><tr><th>Date</th><th>Product</th><th>From</th><th className="r">Qty</th><th>Reason</th>{caps.inventory === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{faulty.map(f => (
             <tr key={f.id}>
-              <td style={{ fontSize: "12px", color: T.textMuted }}>{new Date(f.created_at).toLocaleDateString()}</td>
+              <td style={{ fontSize: "12px", color: T.textMuted }}>{fmtDate(f.created_at)}</td>
               <td>{f.product_name}</td>
               <td style={{ fontSize: "12px" }}>{f.agent_id ? agentName(f.agent_id) : "Warehouse"}</td>
               <td className="r cx-num" style={{ fontWeight: 700 }}>{f.quantity}</td>
@@ -2505,7 +2542,7 @@ export default function InfinistoresCRM() {
                 <div style={{ background: T.accent, borderRadius: "6px 6px 0 0", height: `${m.orders ? m.delivered / m.orders * 100 : 0}%`, minHeight: m.delivered > 0 ? "3px" : 0 }} />
               </div>
               <div className="cx-num" style={{ fontSize: "11px", fontWeight: 800 }}>{m.orders}</div>
-              <div style={{ fontSize: "9px", color: T.textMuted }}>{new Date(m.key + "-01").toLocaleDateString(undefined, { month: "short", year: "2-digit" })}</div>
+              <div style={{ fontSize: "9px", color: T.textMuted }}>{fmtMonth(`${m.key}-01T12:00:00+01:00`)}</div>
             </div>)}
           </div>;
         })()}
@@ -2899,7 +2936,7 @@ export default function InfinistoresCRM() {
 
       {ghanaTab === "catalogue" && <>
         <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, fontSize: "12px", color: T.textMuted }}>
-          <b style={{ color: T.text }}>Available</b> = free to sell now · <b style={{ color: T.text }}>In-flight</b> = units out on active orders (Packaged → Delivery Completed) · <b style={{ color: T.text }}>Actual in country</b> = your true physical stock (available + in-flight). The In-flight column breaks each product down by where its units are — <span style={{ color: T.danger, fontWeight: 700 }}>issue / return</span> and <span style={{ color: T.warning, fontWeight: 700 }}>delivered·unremitted</span> are the ones to chase. Catalogue synced from VDL{ghLastSynced ? ` ${new Date(ghLastSynced).toLocaleString()}` : ""}; in-flight reconciled daily.
+          <b style={{ color: T.text }}>Available</b> = free to sell now · <b style={{ color: T.text }}>In-flight</b> = units out on active orders (Packaged → Delivery Completed) · <b style={{ color: T.text }}>Actual in country</b> = your true physical stock (available + in-flight). The In-flight column breaks each product down by where its units are — <span style={{ color: T.danger, fontWeight: 700 }}>issue / return</span> and <span style={{ color: T.warning, fontWeight: 700 }}>delivered·unremitted</span> are the ones to chase. Catalogue synced from VDL{ghLastSynced ? ` ${fmtDateTime(ghLastSynced)}` : ""}; in-flight reconciled daily.
         </Card>
         {ghProducts.length === 0 ? ghEmpty("No catalogue yet — run vdl-product-sync") :
           <Card style={{ overflow: "hidden" }}><div style={{ overflowX: "auto" }}><table className="cx-table">
@@ -2991,7 +3028,7 @@ export default function InfinistoresCRM() {
             <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
               {orderEvents.map(ev => (
                 <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
-                  <span style={{ color: T.textLight, minWidth: "112px" }}>{new Date(ev.changed_at).toLocaleString()}</span>
+                  <span style={{ color: T.textLight, minWidth: "112px" }}>{fmtDateTime(ev.changed_at)}</span>
                   {ev.from_status && <><Pill status={ev.from_status} /><span style={{ color: T.textLight }}>→</span></>}
                   <Pill status={ev.to_status} />
                 </div>
