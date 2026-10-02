@@ -256,12 +256,23 @@ const STAGE_OF = {
 };
 const CALLER_QUEUE_STATUSES = ["pending", "call_back", "postponed", "follow_up"];
 
+// Add-ons stored on an order → a clean array of { name, qty, total } (tolerant
+// of older rows where it may be absent or a JSON string).
+function orderAddOns(o) {
+  let a = o?.add_ons;
+  if (!a) return [];
+  if (typeof a === "string") { try { a = JSON.parse(a); } catch { return []; } }
+  return Array.isArray(a) ? a.filter(x => x && (Number(x.qty) > 0 || Number(x.total) > 0)) : [];
+}
+
 // One order → clean WhatsApp-group payload for the clipboard
 function orderClipboard(o, cur) {
   const wa = cleanPhone(o.whatsapp);
   const stateLabel = o.country === "ghana" ? "Region" : "State";
+  const addOns = orderAddOns(o);
   return [
     `NEW ORDER — ${o.product || ""} x${o.qty || 1}`,
+    ...addOns.map(a => `Add-on: ${a.name} x${a.qty || 1} (${cur}${Number(a.total || 0).toLocaleString()})`),
     `Name: ${o.name || ""}`,
     `Phone: ${cleanPhone(o.phone)}`,
     wa && wa !== cleanPhone(o.phone) ? `WhatsApp: ${wa}` : null,
@@ -1023,6 +1034,7 @@ export default function InfinistoresCRM() {
   const [showPackageMix, setShowPackageMix] = useState(false);
   const [decisionMetrics, setDecisionMetrics] = useState(null);
   const [leadTime, setLeadTime] = useState(null); // avg/median days created→delivered
+  const [addonSales, setAddonSales] = useState(null); // add-on units/revenue by name
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [decisionError, setDecisionError] = useState("");
   const [decisionRefreshKey, setDecisionRefreshKey] = useState(0);
@@ -1332,6 +1344,10 @@ export default function InfinistoresCRM() {
     sb.rpc("get_nigeria_lead_time", { p_from: decisionFrom, p_to: decisionTo, p_product: focusProduct === "all" ? null : focusProduct })
       .then(data => { if (!cancelled) setLeadTime(data); })
       .catch(() => { if (!cancelled) setLeadTime(null); });
+    // Add-on sales — optional; hides until the RPC is deployed and there's data.
+    sb.rpc("get_nigeria_addon_sales", { p_from: decisionFrom, p_to: decisionTo, p_product: focusProduct === "all" ? null : focusProduct })
+      .then(data => { if (!cancelled) setAddonSales(data); })
+      .catch(() => { if (!cancelled) setAddonSales(null); });
     return () => { cancelled = true; };
   }, [authed, caps.analytics, tab, country, decisionFrom, decisionTo, focusProduct, decisionRefreshKey]);
 
@@ -2463,6 +2479,17 @@ export default function InfinistoresCRM() {
               { l: "Out of stock (excluded)", v: decisionOverview.mature_out_of_stock, c: T.textMuted, bg: T.surfaceAlt },
             ].map(outcome => <span key={outcome.l} className="cx-outcome-chip" style={{ color: outcome.c, background: outcome.bg }}>{outcome.l}: {Number(outcome.v || 0).toLocaleString()}</span>)}
           </div>
+          {addonSales && Number(addonSales.total_units || 0) > 0 && <div style={{ margin: "0 0 12px", padding: "12px 14px", borderRadius: T.r, background: T.surfaceAlt, border: `1px solid ${T.border}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "6px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: T.textMuted }}>Add-on sales</div>
+              <div style={{ fontSize: "11px", color: T.textMuted }}>delivered orders · already included in Delivered sales above</div>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px" }}>
+              {(addonSales.by_name || []).map(a => <span key={a.name} style={{ fontSize: "12px", fontWeight: 600, padding: "4px 10px", borderRadius: "20px", background: T.accentLight, color: T.accent }}>
+                {a.name}: <span className="cx-num">{Number(a.units || 0).toLocaleString()}</span> sold · <span className="cx-num">{decisionMoney(a.revenue)}</span>
+              </span>)}
+            </div>
+          </div>}
           <div style={{ margin: "0 0 4px" }}><Btn v="secondary" sz="xs" onClick={() => setShowDecisionNote(v => !v)}>{showDecisionNote ? "Hide how this is calculated" : "How is this calculated?"}</Btn></div>
           {showDecisionNote && <div className="cx-insight-note">
             “7-day cohort” includes every order received at least {decisionMetrics.maturity_days} days ago. The headline rate is delivered ÷ all eligible cohort orders, so still-open orders remain in the denominator; only out-of-stock orders are excluded. {resolvedDeliveryRate != null ? ` Among resolved orders only, the rate is ${resolvedDeliveryRate}% (${decisionOverview.mature_delivered} of ${matureResolved}).` : ""} {Number(decisionOverview.maturing_orders || 0) > 0 ? `${decisionOverview.maturing_orders} newer orders are still maturing.` : ""} Stock cover still uses units actually delivered in the last 28 days.
@@ -3010,8 +3037,10 @@ export default function InfinistoresCRM() {
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "10px", marginBottom: "14px" }}>
             {[{ l: "Customer", v: o.name }, { l: "Phone", v: cleanPhone(o.phone) }, { l: "WhatsApp", v: cleanPhone(o.whatsapp || o.phone) }, { l: country === "ghana" ? "Region" : "State", v: o.state }].map(f => <div key={f.l}><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>{f.l}</div><div style={{ fontWeight: 600, fontSize: "14px" }}>{f.v}</div></div>)}
             <div style={{ gridColumn: "1/-1" }}><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Address</div><div style={{ fontSize: "13px" }}>{o.address}</div></div>
-            <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Product</div><div style={{ fontWeight: 700 }}>{o.product} — {o.pack_name} (×{o.qty})</div></div>
-            <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Price</div><div className="cx-num" style={{ fontWeight: 800, fontSize: "16px" }}>{cur}{(o.price || 0).toLocaleString()}</div></div>
+            <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Product</div><div style={{ fontWeight: 700 }}>{o.product} — {o.pack_name} (×{o.qty})</div>
+              {orderAddOns(o).map((a, i) => <div key={i} style={{ fontSize: "12px", fontWeight: 600, color: T.accent }}>+ {a.name} ×{a.qty || 1} ({cur}{Number(a.total || 0).toLocaleString()})</div>)}
+            </div>
+            <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Price{orderAddOns(o).length ? " (incl. add-ons)" : ""}</div><div className="cx-num" style={{ fontWeight: 800, fontSize: "16px" }}>{cur}{(o.price || 0).toLocaleString()}</div></div>
             {cAgents.length > 0 && <div style={{ gridColumn: "1/-1" }}><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700, marginBottom: "3px" }}>Stock in {o.state || "state"}</div><StockBadge signal={stockSignal(o)} /></div>}
             {(deliveryDateOf(o) || o.delivery_pref) && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Delivery date</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{fmtDate(deliveryDateOf(o)) || o.delivery_pref}</div></div>}
             {o.payment_option && <div><div style={{ fontSize: "10px", color: T.textMuted, textTransform: "uppercase", fontWeight: 700 }}>Payment</div><div style={{ fontWeight: 600, fontSize: "13px" }}>{o.payment_option}</div></div>}

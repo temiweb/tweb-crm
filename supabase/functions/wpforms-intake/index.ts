@@ -38,6 +38,20 @@ function parsePackage(pkg: string): { packName: string; qty: number; price: numb
 
 const toNum = (s: string) => Number(s.replace(/[₦,\s]/g, ""));
 
+// Resolve one add-on field value into a line, or null. Generic and
+// product-agnostic: the form carries "qty|total|name" (same structured-value
+// idea as the package field), e.g. "1|5000|Car perfume". Anything without a
+// valid qty, total and name (e.g. "No thanks", "0") yields no add-on.
+function resolveAddon(raw: string): { name: string; qty: number; total: number } | null {
+  if (!raw || !raw.includes("|")) return null;
+  const [q, t, ...rest] = raw.split("|").map((s) => s.trim());
+  const qty = Math.round(toNum(q));
+  const total = toNum(t);
+  const name = rest.join("|").trim();
+  if (!Number.isFinite(qty) || qty < 1 || !Number.isFinite(total) || total <= 0 || !name) return null;
+  return { name, qty, total };
+}
+
 // Resolve a package field into { packName, qty, price }.
 // Preferred form is a structured dropdown value "units|amount|name"
 // (WPForms "Show Values") — reliable even for bundles like "Buy 2, Get 1 Free".
@@ -103,6 +117,13 @@ Deno.serve(async (req) => {
   const phone = asString(body.phone);
   const name = asString(body.name).trim();
 
+  // Optional paid add-ons (e.g. an extra Car perfume). The grand total the
+  // customer pays is the package price plus every add-on's total.
+  const addOn = resolveAddon(asString(body.addon));
+  const addOns = addOn ? [addOn] : [];
+  const addonTotal = addOns.reduce((s, a) => s + a.total, 0);
+  const grandTotal = pkg.price + addonTotal;
+
   // WPForms can't expose the entry ID at render time, so we dedup on a
   // date-scoped content key: this collapses a true double-fire of the same
   // submission, but a genuine re-order on a later day stays a separate order.
@@ -125,7 +146,9 @@ Deno.serve(async (req) => {
     product: asString(body.product) || pkg.packName,
     pack_name: pkg.packName,
     qty: pkg.qty,
-    price: pkg.price,
+    price: grandTotal,
+    add_ons: addOns.length ? addOns : null,
+    addon_total: addonTotal || null,
     delivery_pref: asString(body.delivery_pref),
     delivery_date: asString(body.delivery_date),
     payment_option: asString(body.payment_option),
@@ -136,7 +159,7 @@ Deno.serve(async (req) => {
     country: "nigeria",
     delivery_fee: 0,
     actual_qty_delivered: pkg.qty,
-    actual_price_collected: pkg.price,
+    actual_price_collected: grandTotal,
     source: "wpforms",
     external_id: externalId,
   };
@@ -151,12 +174,12 @@ Deno.serve(async (req) => {
 
   let r = await fetch(insertUrl, { method: "POST", headers: insertHeaders, body: JSON.stringify([row]) });
 
-  // Safety net: if the caller-workflow columns aren't there yet (migration 0006
-  // not applied), don't drop the order — retry without those fields.
+  // Safety net: if newer columns aren't there yet (migration 0006 caller
+  // workflow, or 0022 add-ons), don't drop the order — retry without them.
   if (!r.ok) {
     const detail = await r.text();
-    if (/assigned_to|assigned_at|column/.test(detail)) {
-      const { assigned_to: _a, assigned_at: _b, ...base } = row;
+    if (/assigned_to|assigned_at|add_ons|addon_total|column/.test(detail)) {
+      const { assigned_to: _a, assigned_at: _b, add_ons: _c, addon_total: _d, ...base } = row;
       r = await fetch(insertUrl, { method: "POST", headers: insertHeaders, body: JSON.stringify([base]) });
     }
     if (!r.ok) {
