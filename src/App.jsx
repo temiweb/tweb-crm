@@ -2502,7 +2502,9 @@ export default function InfinistoresCRM() {
               const rate = product.delivery_rate == null ? "-" : `${product.delivery_rate}%`;
               const revenueShare = product.revenue_share == null ? "" : ` · ${product.revenue_share}%`;
               const adPerDelivery = product.ad_spend_per_delivered_order == null ? "-" : decisionMoney(product.ad_spend_per_delivered_order);
-              return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} orders / {Number(product.delivered_units || 0).toLocaleString()} units</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td></tr>;
+              // Add-on rows (e.g. refills) have no orders of their own — they ride on other orders.
+              const addon = !!product.is_addon;
+              return <tr key={product.product}><td className="td-product">{product.product}{addon && <span title="Sold as an add-on on other orders" style={{ marginLeft: "6px", fontSize: "10px", fontWeight: 700, padding: "1px 7px", borderRadius: "20px", background: T.accentLight, color: T.accent }}>add-on</span>}</td><td className="r cx-num">{addon ? "—" : Number(product.orders || 0).toLocaleString()}</td><td className="r cx-num">{addon ? "—" : rate}</td><td className="r cx-num">{Number(product.delivered_orders || 0).toLocaleString()} orders / {Number(product.delivered_units || 0).toLocaleString()} units</td><td className="r cx-num">{decisionMoney(product.net_revenue)}<span style={{ color: T.textMuted, fontSize: "10px" }}>{revenueShare}</span></td><td className="r cx-num">{decisionMoney(product.tagged_ad_spend)}</td><td className="r cx-num">{adPerDelivery}</td></tr>;
             })}</tbody>
           </table></div>
           </div>
@@ -2510,7 +2512,7 @@ export default function InfinistoresCRM() {
           <div className="cx-insight-section-head"><div className="cx-section-t">Stock cover</div><div className="cx-sub">Warehouse + field stock vs recent delivery pace</div></div>
           <div style={{ overflowX: "auto" }}><table className="cx-table cx-table-dense">
             <thead><tr><th>Product</th><th className="r">Warehouse</th><th className="r">With agents</th><th className="r">Weeks of cover</th></tr></thead>
-            <tbody>{decisionProducts.map(product => {
+            <tbody>{decisionProducts.filter(product => !(product.is_addon && !Number(product.total_qty || 0))).map(product => {
               const cover = product.weeks_cover == null ? "-" : `${product.weeks_cover} wk`;
               const color = product.weeks_cover == null ? T.textMuted : product.weeks_cover < 2 ? T.danger : product.weeks_cover < 4 ? T.warning : T.accent;
               return <tr key={product.product}><td className="td-product">{product.product}</td><td className="r cx-num">{Number(product.warehouse_qty || 0).toLocaleString()}</td><td className="r cx-num">{Number(product.agent_qty || 0).toLocaleString()}</td><td className="r cx-num" style={{ fontWeight: 800, color }}>{cover}</td></tr>;
