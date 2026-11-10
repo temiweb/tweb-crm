@@ -1807,6 +1807,16 @@ export default function InfinistoresCRM() {
     } catch (err) { showToast(err.message); }
   };
 
+  const doSetProductBonus = async (product, bonusProduct, perUnit) => {
+    const data = { bonus_product: bonusProduct, bonus_qty_per_unit: perUnit };
+    setProducts(prev => prev.map(p => p.id === product.id ? { ...p, ...data } : p));
+    setEditProduct(null);
+    try {
+      await sb.update("products", { id: product.id }, data);
+      showToast(bonusProduct ? `Each ${product.name} now ships with ${perUnit} × ${bonusProduct}` : "Bonus removed", "success");
+    } catch (err) { showToast(err.message); await refreshInventoryData(); }
+  };
+
   const doDeleteProduct = async (product) => {
     if (!window.confirm(`Delete ${product.name}? This only works if it has no stock or transaction history.`)) return;
     try {
@@ -2316,7 +2326,7 @@ export default function InfinistoresCRM() {
           <thead><tr><th>Product</th><th className="r">In warehouse</th><th className="r">With agents</th><th className="r">Total</th>{caps.products === "edit" && <th className="r">Actions</th>}</tr></thead>
           <tbody>{products.map(p => { const wa = withAgents(p.name); const wh = p.warehouse_qty || 0; return (
             <tr key={p.id}>
-              <td><b style={{ fontWeight: 600 }}>{p.name}</b></td>
+              <td><b style={{ fontWeight: 600 }}>{p.name}</b>{p.bonus_product && Number(p.bonus_qty_per_unit) > 0 && <div style={{ fontSize: "11px", color: T.textMuted }}>+{p.bonus_qty_per_unit} {p.bonus_product} free per unit</div>}</td>
               <td className="r">{caps.products === "edit" ? <input type="number" defaultValue={wh} key={wh} onBlur={e => { const v = Math.max(0, +e.target.value || 0); if (v !== wh) doSetWarehouseQty(p, v); }} style={{ width: "72px", textAlign: "right", padding: "5px 8px", border: `1.5px solid ${T.border}`, borderRadius: "6px", fontFamily: T.fd, fontWeight: 700 }} /> : <span className="cx-num" style={{ fontWeight: 700 }}>{wh}</span>}</td>
               <td className="r cx-num" style={{ color: wa ? T.accent : T.textLight }}>{wa}</td>
               <td className="r cx-num" style={{ fontWeight: 800 }}>{wh + wa}</td>
@@ -2331,7 +2341,7 @@ export default function InfinistoresCRM() {
           <Card key={p.id} style={{ padding: "16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}><span style={{ fontWeight: 700, fontFamily: T.fd, fontSize: "15px" }}>{p.name}</span><span className="cx-num" style={{ fontWeight: 800, fontSize: "18px", color: withAgents(p.name) ? T.accent : T.textLight }}>{withAgents(p.name)} <span style={{ fontSize: "12px", color: T.textMuted, fontWeight: 600 }}>with agents</span></span></div>
             {cAgents.map(a => { const q = inventory.find(i => i.agent_id === a.id && i.product_name === p.name)?.qty || 0; return (
-              <div key={a.id} className="cx-list-row" style={{ padding: "7px 0", fontSize: "13px" }}><span style={{ color: T.textMuted }}>{a.name}</span><span className="cx-num" style={{ fontWeight: 700, color: q <= 5 && q > 0 ? T.danger : q === 0 ? T.textLight : T.text }}>{q}{q > 0 && q <= 5 && " ⚠"}</span></div>
+              <div key={a.id} className="cx-list-row" style={{ padding: "7px 0", fontSize: "13px" }}><span style={{ color: T.textMuted }}>{a.name}</span><span className="cx-num" title={q < 0 ? "Recorded stock is below zero: this agent gave out more than the CRM shows they had. Correct it with a waybill." : undefined} style={{ fontWeight: 700, color: q <= 5 && q !== 0 ? T.danger : q === 0 ? T.textLight : T.text }}>{q}{q > 0 && q <= 5 && " ⚠"}{q < 0 && <span style={{ fontSize: "10px", marginLeft: "4px" }}>short</span>}</span></div>
             ); })}
           </Card>
         ))}</div>
@@ -3137,8 +3147,9 @@ export default function InfinistoresCRM() {
         <ProductForm onSubmit={doAddProduct} />
       </Modal>
 
-      <Modal open={!!editProduct} onClose={() => setEditProduct(null)} title="Rename product">
+      <Modal open={!!editProduct} onClose={() => setEditProduct(null)} title="Edit product">
         {editProduct && <ProductForm key={editProduct.id} product={editProduct} onSubmit={doEditProduct} />}
+        {editProduct && <BonusForm key={`bonus-${editProduct.id}`} product={editProduct} products={products} onSubmit={doSetProductBonus} />}
       </Modal>
 
       <Modal open={showAddOrder} onClose={() => setShowAddOrder(false)} title="Add order" wide>
@@ -3333,6 +3344,26 @@ function AgentForm({ onSubmit, country, agent, knownStates = [] }) {
 function ProductForm({ onSubmit, product }) {
   const [n, sN] = useState(product?.name || "");
   return <div><Inp label="Product name" value={n} onChange={e => sN(e.target.value)} /><Btn onClick={() => { if (n.trim()) onSubmit(n.trim()); }} style={{ width: "100%", justifyContent: "center", marginTop: "4px" }}>{product ? "Save name" : "Add product"}</Btn></div>;
+}
+
+// "Each unit ships with N × <item> free" — deducted from the delivering agent's
+// stock when the order is delivered (migration 0024). 0 / none switches it off.
+function BonusForm({ product, products, onSubmit }) {
+  const [bonus, setBonus] = useState(product.bonus_product || "");
+  const [per, setPer] = useState(product.bonus_qty_per_unit || 1);
+  const others = products.filter(p => p.name !== product.name);
+  const dirty = bonus !== (product.bonus_product || "") || (bonus && Number(per) !== Number(product.bonus_qty_per_unit || 0));
+  return <div style={{ marginTop: "18px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
+    <div style={{ fontWeight: 700, fontSize: "13px", marginBottom: "4px" }}>Free bonus with each unit</div>
+    <div style={{ fontSize: "12px", color: T.textMuted, marginBottom: "10px" }}>When this product is delivered, the bonus is also taken from the delivering agent's stock.</div>
+    <label style={fLbl}>Bonus item</label>
+    <select value={bonus} onChange={e => setBonus(e.target.value)} style={fSel}>
+      <option value="">No bonus</option>
+      {others.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+    </select>
+    {bonus && <Inp label="Bonus units per product unit" type="number" value={per} onChange={e => setPer(Math.max(1, Math.round(+e.target.value || 1)))} />}
+    <Btn v="secondary" disabled={!dirty} onClick={() => onSubmit(product, bonus || null, bonus ? Number(per) || 1 : 0)} style={{ width: "100%", justifyContent: "center" }}>Save bonus</Btn>
+  </div>;
 }
 
 const fLbl = { display: "block", fontSize: "11px", fontWeight: 700, color: T.textMuted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.6px" };
