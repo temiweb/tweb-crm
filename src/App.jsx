@@ -7,7 +7,7 @@ import {
   Phone, MessageCircle, Plus, ArrowUpRight, ArrowDownRight,
   Store, RefreshCw, LogOut, Upload, Download, Users, Pencil, Trash2, X,
   Package, TrendingUp, Wallet, CheckCircle2, Clock, Filter,
-  Copy, UserPlus, AlertTriangle, Archive, RotateCcw
+  Copy, UserPlus, AlertTriangle, Archive, RotateCcw, Menu
 } from "lucide-react";
 
 /*
@@ -255,6 +255,11 @@ const STAGE_OF = {
   out_of_stock: "unfulfilled",
 };
 const CALLER_QUEUE_STATUSES = ["pending", "call_back", "postponed", "follow_up"];
+
+// Delivered but no delivery fee recorded yet = the agent hasn't reported the
+// fee and remitted the cash. Entering the fee clears it from the list.
+const isUnremitted = o => o.status === "delivered" && !(Number(o.delivery_fee) > 0);
+const deliveredWhen = o => o.delivered_at || o.updated_at || o.created_at;
 
 // Add-ons stored on an order → a clean array of { name, qty, total } (tolerant
 // of older rows where it may be absent or a JSON string).
@@ -715,11 +720,18 @@ const CSS = `
 
 /* ---- mobile ---- */
 .cx-mobitop{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--rail);color:#fff;position:sticky;top:0;z-index:50}
-.cx-bottomnav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);
-  display:flex;justify-content:space-around;padding:8px 0 env(safe-area-inset-bottom,8px);z-index:80;box-shadow:0 -4px 16px rgba(12,27,20,.06)}
-.cx-bn{background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;color:var(--muted)}
-.cx-bn.on{color:var(--brand)}
-.cx-bn span{font-size:9.5px;font-weight:700}
+.cx-burger{background:rgba(255,255,255,.1);border:none;color:#fff;border-radius:8px;width:36px;height:36px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer}
+.cx-drawer{position:fixed;top:0;left:0;bottom:0;width:min(290px,84vw);z-index:200;
+  background:linear-gradient(180deg,var(--rail),var(--rail-2));color:var(--rail-fg);
+  display:flex;flex-direction:column;transform:translateX(-105%);transition:transform .24s ease;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@supports (height:100dvh){.cx-drawer{bottom:auto;height:100dvh}}
+.cx-drawer.open{transform:none;box-shadow:12px 0 40px rgba(8,20,14,.35)}
+.cx-drawer .cx-nav{padding:12px 11px;font-size:15px}
+.cx-drawer-bg{position:fixed;inset:0;background:rgba(8,20,14,.45);z-index:190;animation:cxFade .2s ease}
+@keyframes cxFade{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion: reduce){.cx-drawer,.cx-drawer-bg{transition:none;animation:none}}
 
 @media(prefers-reduced-motion:reduce){.cx-app *{transition:none!important}}
 `;
@@ -1004,6 +1016,9 @@ export default function InfinistoresCRM() {
   const dismissToast = id => setToasts(prev => prev.filter(t => t.id !== id));
 
   const [tab, setTab] = useState("orders");
+  const [navOpen, setNavOpen] = useState(false);     // mobile side menu
+  const [remitF, setRemitF] = useState(false);       // orders list: unremitted only
+  const [showRemit, setShowRemit] = useState(false); // unremitted panel: per-agent rows
   const [invTab, setInvTab] = useState("products");
   const [ghanaTab, setGhanaTab] = useState("review");
   const [ghSel, setGhSel] = useState(new Set());   // selected Ghana orders for bulk approve
@@ -1328,6 +1343,17 @@ export default function InfinistoresCRM() {
   const decisionFrom = dateKey(periodRange.from);
   const decisionTo = dateKey(periodRange.to);
 
+  // Mobile side menu: Escape closes it; the page behind doesn't scroll while open.
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = e => { if (e.key === "Escape") setNavOpen(false); };
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener("keydown", onKey); };
+  }, [navOpen]);
+  useEffect(() => { if (!isMobile) setNavOpen(false); }, [isMobile]);
+
   // This is deliberately separate from the CRM's 90-second operational poll:
   // it returns one aggregate JSON payload only while Analytics is open.
   useEffect(() => {
@@ -1360,11 +1386,13 @@ export default function InfinistoresCRM() {
     if (callerF !== "all" && callerF !== "unassigned" && o.assigned_to !== callerF) return false;
     if (dupeF && !dupeMap[o.id]) return false;
     if (productF !== "all" && o.product !== productF) return false;
-    if (periodRange.from && new Date(o.created_at) < periodRange.from) return false;
-    if (periodRange.to && new Date(o.created_at) > periodRange.to) return false;
+    if (remitF && !isUnremitted(o)) return false;
+    // Unremitted = everything outstanding, whatever the period (old debts still count).
+    if (!remitF && periodRange.from && new Date(o.created_at) < periodRange.from) return false;
+    if (!remitF && periodRange.to && new Date(o.created_at) > periodRange.to) return false;
     if (search) { const s = search.toLowerCase(); return [o.name, cleanPhone(o.phone), o.address, o.state, o.product, o.notes].some(f => (f || "").toLowerCase().includes(s)); }
     return true;
-  }), [cOrders, statusF, stateF, agentF, callerF, dupeF, periodRange, search, dupeMap, productF]);
+  }), [cOrders, statusF, stateF, agentF, callerF, dupeF, remitF, periodRange, search, dupeMap, productF]);
 
   // Caller queue mode: only working statuses, oldest-first (work the backlog)
   const isCaller = me?.role === "caller";
@@ -1377,8 +1405,10 @@ export default function InfinistoresCRM() {
       return filtered.filter(o => CALLER_QUEUE_STATUSES.includes(o.status))
         .slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     }
+    // Unremitted: longest-outstanding first, so the oldest debts get chased first.
+    if (remitF) return filtered.slice().sort((a, b) => new Date(deliveredWhen(a)) - new Date(deliveredWhen(b)));
     return filtered;
-  }, [filtered, isCaller, queueMode]);
+  }, [filtered, isCaller, queueMode, remitF]);
 
   useEffect(() => { setOrdersPage(0); }, [search, statusF, stateF, agentF, callerF, dupeF, productF, periodRange, country, queueMode]);
 
@@ -1558,6 +1588,39 @@ export default function InfinistoresCRM() {
 
   // Phase 7: stale in-transit orders (dispatched > STALE_HOURS ago)
   const staleOrders = useMemo(() => cOrders.filter(o => o.status === "in_transit" && o.dispatched_at && (Date.now() - new Date(o.dispatched_at).getTime()) > STALE_HOURS * 3600 * 1000), [cOrders]);
+
+  // Unremitted (delivered, no delivery fee yet) — all-time, grouped by agent for follow-up.
+  const unremitted = useMemo(() => cOrders.filter(isUnremitted), [cOrders]);
+  const unremittedByAgent = useMemo(() => {
+    const days = o => Math.max(0, Math.floor((Date.now() - new Date(deliveredWhen(o)).getTime()) / 864e5));
+    const groups = {};
+    unremitted.forEach(o => {
+      const key = o.agent_id || "none";
+      const g = groups[key] = groups[key] || { key, agent: agents.find(a => a.id === o.agent_id) || null, name: o.agent_name || "", orders: [], amount: 0, oldest: 0 };
+      g.orders.push(o);
+      g.amount += Number(o.actual_price_collected || o.price || 0);
+      g.oldest = Math.max(g.oldest, days(o));
+    });
+    return Object.values(groups)
+      .map(g => ({ ...g, orders: g.orders.slice().sort((a, b) => new Date(deliveredWhen(a)) - new Date(deliveredWhen(b))) }))
+      .sort((a, b) => b.oldest - a.oldest || b.amount - a.amount);
+  }, [unremitted, agents]);
+  const unremittedTotal = unremittedByAgent.reduce((s, g) => s + g.amount, 0);
+  const unremittedOldest = unremittedByAgent.reduce((m, g) => Math.max(m, g.oldest), 0);
+
+  // WhatsApp-ready reminder for one agent, listing their unremitted orders oldest-first.
+  const remitReminder = g => {
+    const shown = g.orders.slice(0, 30);
+    return [
+      `Hi ${g.agent?.name || g.name || ""}, please send the delivery report and remittance for ${g.orders.length === 1 ? "this delivered order" : `these ${g.orders.length} delivered orders`}:`,
+      "",
+      ...shown.map((o, i) => `${i + 1}. ${o.name || "Customer"} · ${o.product || ""} x${o.qty || 1} · delivered ${fmtDate(new Date(deliveredWhen(o)))} · ${cur}${Number(o.actual_price_collected || o.price || 0).toLocaleString()}`),
+      g.orders.length > shown.length ? `…and ${g.orders.length - shown.length} more` : null,
+      "",
+      `Total collected: ${cur}${g.amount.toLocaleString()}`,
+      "Please include your delivery fee for each. Thank you!",
+    ].filter(l => l !== null).join("\n");
+  };
 
   // Monthly trend (last 6 months) — always all-time, independent of the period pills.
   const monthlyTrend = useMemo(() => {
@@ -2097,7 +2160,7 @@ export default function InfinistoresCRM() {
     <div>
       <div className="cx-head">
         <div><h1 className="cx-h1">Orders</h1><div className="cx-sub">Confirm, assign and track every order</div></div>
-        <div style={{ display: "flex", gap: "8px" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
           {caps.analytics && <Btn v="secondary" onClick={exportOrders}><Download size={15} />Export</Btn>}
           {caps.del && <Btn v="secondary" onClick={() => setShowImport(true)}><Upload size={15} />Import CSV</Btn>}
           {caps.del && <Btn onClick={() => setShowAddOrder(true)}><Plus size={16} />New order</Btn>}
@@ -2111,6 +2174,38 @@ export default function InfinistoresCRM() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
           {staleOrders.slice(0, 12).map(o => <button key={o.id} onClick={() => setViewOrder(o)} style={{ fontSize: "12px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "4px 9px", cursor: "pointer", fontFamily: T.f }}>{o.name} · {Math.floor((Date.now() - new Date(o.dispatched_at).getTime()) / 3600000)}h</button>)}
         </div>
+      </Card>}
+
+      {caps.analytics && unremitted.length > 0 && <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.surfaceAlt, border: `1.5px solid ${T.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <Wallet size={16} style={{ color: T.warning, flexShrink: 0 }} />
+          <span style={{ fontWeight: 700, fontSize: "13px", color: T.text }}>
+            {unremitted.length} delivered order{unremitted.length !== 1 ? "s" : ""} not remitted yet
+            <span style={{ fontWeight: 600, color: T.textMuted }}> · <span className="cx-num">{cur}{unremittedTotal.toLocaleString()}</span> with agents · oldest {unremittedOldest}d</span>
+          </span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
+            <Btn v={remitF ? "warning" : "secondary"} sz="xs" onClick={() => { setRemitF(f => !f); setStatusF("all"); }}>{remitF ? "Showing unremitted ✕" : "Show orders"}</Btn>
+            <Btn v="secondary" sz="xs" onClick={() => setShowRemit(v => !v)}>{showRemit ? "Hide agents" : "By agent"}</Btn>
+          </div>
+        </div>
+        {showRemit && <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "10px" }}>
+          {unremittedByAgent.map(g => {
+            const ageColor = g.oldest > 7 ? T.danger : g.oldest > 3 ? T.warning : T.textMuted;
+            const label = g.agent?.name || g.name || "No agent recorded";
+            return <div key={g.key} style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "8px 11px" }}>
+              <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: "13px" }}>{label}</div>
+                <div style={{ fontSize: "11px", color: T.textMuted }}>{g.orders.length} order{g.orders.length !== 1 ? "s" : ""} · <span className="cx-num">{cur}{g.amount.toLocaleString()}</span> · <b style={{ color: ageColor }}>oldest {g.oldest}d</b></div>
+              </div>
+              <div style={{ display: "flex", gap: "5px" }}>
+                <Btn v="secondary" sz="xs" onClick={() => { setRemitF(true); setStatusF("all"); setAgentF(g.agent ? g.agent.id : "unassigned"); }}>Show</Btn>
+                {g.agent?.phone && <Btn v="secondary" sz="xs" title={`WhatsApp ${label} the list`} onClick={() => window.open(waLink(g.agent.phone, remitReminder(g), country), "_blank", "noopener")}><MessageCircle size={13} />Remind</Btn>}
+                <Btn v="secondary" sz="xs" title="Copy reminder" onClick={async () => { try { await navigator.clipboard.writeText(remitReminder(g)); showToast(`Reminder for ${label} copied`, "success"); } catch { showToast("Couldn't copy — check browser permissions"); } }}><Copy size={13} /></Btn>
+              </div>
+            </div>;
+          })}
+          <div style={{ fontSize: "10px", color: T.textMuted }}>ⓘ An order leaves this list once you enter its delivery fee (Edit order). Covers all dates, not just the selected period.</div>
+        </div>}
       </Card>}
 
       {cAgents.length > 0 && stockShortfalls.length > 0 && <Card style={{ padding: "12px 16px", marginBottom: "12px", background: T.dangerBg, border: `1.5px solid #f5c2c2` }}>
@@ -2143,6 +2238,7 @@ export default function InfinistoresCRM() {
           <span className={`cx-sel ${productF !== "all" ? "act" : ""}`}><select value={productF} onChange={e => setProductF(e.target.value)}><option value="all">All products</option>{productsList.map(p => <option key={p} value={p}>{p}</option>)}</select></span>
         </>}
         <Btn v={dupeF ? "warning" : "secondary"} sz="sm" onClick={() => setDupeF(!dupeF)}><Users size={14} />{dupeF ? "Dupes ✕" : "Dupes"}</Btn>
+        {caps.analytics && <Btn v={remitF ? "warning" : "secondary"} sz="sm" onClick={() => setRemitF(!remitF)} title="Delivered orders with no delivery fee recorded yet"><Wallet size={14} />{remitF ? "Unremitted ✕" : `Unremitted${unremitted.length ? ` (${unremitted.length})` : ""}`}</Btn>}
       </div>
 
       {isMobile && showFilters && <Card style={{ padding: "14px", marginBottom: "12px" }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
@@ -2164,7 +2260,7 @@ export default function InfinistoresCRM() {
       </div>}
 
       {/* MOBILE CARDS */}
-      {isMobile ? <div style={{ display: "grid", gap: "10px" }}>
+      {isMobile ? <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: "10px" }}>
         {viewOrders.length === 0 && <Card style={{ padding: "48px 20px", textAlign: "center", color: T.textMuted }}>{cOrders.length === 0 ? "Import a CSV to get started." : "No orders match your filters."}</Card>}
         {pagedOrders.map(o => <Card key={o.id} style={{ padding: "14px", background: sel.has(o.id) ? T.accentLight : T.surface, border: sel.has(o.id) ? `1.5px solid ${T.accentMid}` : `1px solid ${T.border}` }}>
           <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
@@ -2184,7 +2280,7 @@ export default function InfinistoresCRM() {
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "6px", marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${T.borderLight}`, justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: "6px", marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${T.borderLight}`, justifyContent: "flex-end", flexWrap: "wrap" }}>
             {FEATURE_CALLER && <Btn v="secondary" sz="xs" onClick={() => copyOrder(o)}><Copy size={13} />Copy</Btn>}
             <a href={`tel:${cleanPhone(o.phone)}`}><Btn v="secondary" sz="xs"><Phone size={13} />Call</Btn></a>
             <a href={getWALink(o)} target="_blank" rel="noopener noreferrer"><Btn v="whatsapp" sz="xs"><MessageCircle size={13} />WhatsApp</Btn></a>
@@ -3227,27 +3323,45 @@ export default function InfinistoresCRM() {
   // ═══════════════════════════════════════════════
   if (isMobile) {
     return (
-      <div className="cx-app" style={{ minHeight: "100vh", paddingBottom: "70px" }}>
+      <div className="cx-app" style={{ minHeight: "100vh" }}>
         <link href={FONTS} rel="stylesheet" />
         <style>{CSS}</style>
         <div className="cx-mobitop">
-          <span className="cx-logo" style={{ width: "30px", height: "30px" }}><Store size={16} /></span>
-          <b style={{ fontFamily: T.fd, fontSize: "16px" }}>Infinistores</b>
+          <button className="cx-burger" onClick={() => setNavOpen(true)} aria-label="Open menu" aria-expanded={navOpen}><Menu size={20} /></button>
+          <b style={{ fontFamily: T.fd, fontSize: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{activeMeta?.label || "Infinistores"}</b>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
             {saving && <span style={{ fontSize: "11px", fontWeight: 700, color: "#86efac" }}>Saving…</span>}
             {syncError && <span onClick={() => { setSyncError(false); loadAll(); }} style={{ fontSize: "11px", fontWeight: 700, color: "#fca5a5" }}>⚠ Offline</span>}
-            <button onClick={doSignOut} title={`Sign out${me ? " — " + me.full_name : ""}`} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "rgba(255,255,255,0.7)", borderRadius: "8px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center" }}><LogOut size={15} /></button>
           </div>
         </div>
         <div className="cx-content" style={{ padding: "16px 14px 24px" }}>{screen}</div>
 
-        <div className="cx-bottomnav">
-          {navFlat.map(n => { const Ic = n.icon; return (
-            <button key={n.id} className={`cx-bn ${tab === n.id ? "on" : ""}`} onClick={() => setTab(n.id)}>
-              <Ic size={20} /><span>{n.label}</span>
-            </button>
-          ); })}
-        </div>
+        {/* Slide-in side menu (replaces the old bottom icon bar). */}
+        {navOpen && <div className="cx-drawer-bg" onClick={() => setNavOpen(false)} />}
+        <aside className={`cx-drawer ${navOpen ? "open" : ""}`} aria-hidden={!navOpen}>
+          <div className="cx-brand">
+            <span className="cx-logo"><Store size={17} /></span>
+            <b>Infinistores</b>
+            <button className="cx-collapse" onClick={() => setNavOpen(false)} aria-label="Close menu" tabIndex={navOpen ? 0 : -1}><X size={18} /></button>
+          </div>
+          <nav className="cx-navwrap">
+            {NAV.map(group => (
+              <div key={group.sec}>
+                <div className="cx-navlabel">{group.sec}</div>
+                {group.items.map(n => { const Ic = n.icon; return (
+                  <button key={n.id} className={`cx-nav ${tab === n.id ? "on" : ""}`} tabIndex={navOpen ? 0 : -1} onClick={() => { setTab(n.id); setNavOpen(false); window.scrollTo(0, 0); }}>
+                    <Ic size={18} /><span>{n.label}</span>{n.count !== undefined && <span className="cnt">{n.count}</span>}
+                  </button>
+                ); })}
+              </div>
+            ))}
+          </nav>
+          <div className="cx-storecard" style={{ alignItems: "center" }}>
+            <span className="cx-storeic"><Users size={15} /></span>
+            <div style={{ minWidth: 0, flex: 1 }}><b style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me?.full_name || me?.email || "Signed in"}</b><div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", textTransform: "capitalize" }}>{me?.role || ""}</div></div>
+            <button onClick={doSignOut} tabIndex={navOpen ? 0 : -1} title="Sign out" aria-label="Sign out" style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "rgba(255,255,255,0.75)", borderRadius: "8px", width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><LogOut size={15} /></button>
+          </div>
+        </aside>
 
         {modals}
         <Toasts toasts={toasts} onDismiss={dismissToast} />
